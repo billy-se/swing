@@ -2,30 +2,30 @@ import { Argument } from './types';
 import { PrimaryCommentInput, CommentFunc} from './comments';
 
 interface ReviewModalProps {
-    isOpen: boolean;
-    activeArguments: Argument | null;
-    setIsOpen: (value: boolean) => void;
+    isReviewOpen: boolean;
+    selectedArgument: Argument | null;
+    setIsReviewOpen: (value: boolean) => void;
     handleAddReply: (targetId: string, savedComment: { id: number; content: string; created_at: string }) => void;
 }
 
-export function ReviewModal({ isOpen, activeArguments, setIsOpen, handleAddReply}: ReviewModalProps) {
-    if (!isOpen || !activeArguments) return null;
+export function ReviewModal({ isReviewOpen, selectedArgument, setIsReviewOpen, handleAddReply}: ReviewModalProps) {
+    if (!isReviewOpen || !selectedArgument) return null;
 
     return (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex justify-end">
             <div className="bg-zinc-900 border-l border-zinc-700 p-6 text-white w-full max-w-xl h-full overflow-y-auto shadow-xl">
 
                 <div className="flex justify-between items-center mb-4">
-                    <span className="text-sm text-zinc-400">Posted by {activeArguments?.author}</span>
+                    <span className="text-sm text-zinc-400">Posted by {selectedArgument?.author}</span>
                     <button onClick={() => {
-                        setIsOpen(false);
+                        setIsReviewOpen(false);//close X
                         }} 
                         className="text-zinc-400 hover:text-white">✕</button>
                 </div>
                     
-                <h3 className="text-lg font-bold mb-2">{activeArguments?.title}</h3>
+                <h3 className="text-lg font-bold mb-2">{selectedArgument?.title}</h3>
                 <p className="text-sm text-zinc-300 mb-4">
-                    {activeArguments?.content}
+                    {selectedArgument?.content}
                 </p>
                     
                 {/* Mini Comment Section */}
@@ -34,17 +34,17 @@ export function ReviewModal({ isOpen, activeArguments, setIsOpen, handleAddReply
 
                     <div className="mt-2 pt-3 border-t border-zinc-800/60">
                         <PrimaryCommentInput 
-                            argumentId={activeArguments.id} 
+                            argumentId={selectedArgument.id} 
                             onAddReply={handleAddReply} 
                         />
                     </div>
                     
-                    {activeArguments?.comments && activeArguments.comments.length > 0 ? (
-                        activeArguments.comments.map((comment) => (
+                    {selectedArgument?.comments && selectedArgument.comments.length > 0 ? (
+                        selectedArgument.comments.map((processedComment) => (
                             <CommentFunc 
-                                key={comment.id} 
-                                comment={comment} 
-                                argumentId={activeArguments.id}
+                                key={processedComment.id} 
+                                processedComment={processedComment} 
+                                argumentId={selectedArgument.id}
                                 onAddReply={handleAddReply} 
                             />
                         ))

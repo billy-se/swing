@@ -2,12 +2,12 @@ import { useState, useEffect } from 'react';
 import { Comment } from './types';
 
 interface CommentFuncProps {
-    comment: Comment;
+    processedComment: Comment;
     argumentId: string | number;
     onAddReply: (commentId: string, savedComment: { id: number; content: string; created_at: string }) => void;
 }
 
-export function CommentFunc({ comment, argumentId, onAddReply}: CommentFuncProps) {
+export function CommentFunc({ processedComment, argumentId, onAddReply}: CommentFuncProps) {
 
     const [isReplying, setIsReplying] = useState(false);
     const [replyText, setReplyText] = useState("");
@@ -15,32 +15,32 @@ export function CommentFunc({ comment, argumentId, onAddReply}: CommentFuncProps
     const [isCollapsed, setIsCollapsed] = useState(true);
 
     useEffect(() => {
-        const token = localStorage.getItem('token');
-        const user = localStorage.getItem('username');
+        const token = localStorage.getItem('user_token_swing');
+        //const user = localStorage.getItem('username_swing');
         if (token) setIsLoggedIn(true);
     }, []);
 
-    const isLongText = comment.content.length > 150;
+    const isLongText = processedComment.content.length > 150;
     const [isExpandedLong, setIsExpandedLong] = useState(false);
 
     return (
         <div className="flex flex-col gap-2 my-2 text-xs">
             <div className="bg-zinc-900 border border-zinc-800 p-3 rounded">
                 <div className="flex justify-between items-center text-[10px] text-zinc-500 mb-1">
-                    <span className="font-mono text-emerald-400">[{comment.author}]</span>
+                    <span className="font-mono text-emerald-400">[{processedComment.author}]</span>
                     <div className="flex gap-3 items-center">
-                        <span>{comment.timestamp}</span>
-                        {comment.replies && comment.replies.length > 0 && (
+                        <span>{processedComment.timestamp}</span>
+                        {processedComment.replies && processedComment.replies.length > 0 && (
                             <button
                                 onClick={() => setIsCollapsed(!isCollapsed)} className="text-zinc-400 hover:text-white underline">
-                                {isCollapsed ? `View: ${comment.replies.length}` : "Unview"}
+                                {isCollapsed ? `View: ${processedComment.replies.length}` : "Unview"}
                             </button>
                         )}
                     </div>
                 </div>
 
                 <p className="text-zinc-300 leading-relaxed break-words whitespace-pre-wrap min-w-0">
-                    {isLongText && !isExpandedLong ? `${comment.content.substring(0, 150)}...` : comment.content}
+                    {isLongText && !isExpandedLong ? `${processedComment.content.substring(0, 150)}...` : processedComment.content}
                 </p>
 
                 {isLongText && (
@@ -63,7 +63,7 @@ export function CommentFunc({ comment, argumentId, onAddReply}: CommentFuncProps
                         <textarea
                             value={replyText}
                             onChange={(e) => {setReplyText(e.target.value); setIsCollapsed(false);}}
-                            placeholder={`Replying to ${comment.author}...`}
+                            placeholder={`Replying to ${processedComment.author}...`}
                             className="w-full bg-zinc-950 border border-zinc-800 p-2 rounded text-xs text-zinc-200 outline-none focus:border-zinc-600" 
                             rows={2}
                         />
@@ -72,7 +72,7 @@ export function CommentFunc({ comment, argumentId, onAddReply}: CommentFuncProps
                             onClick={async () => {
                                 if (!replyText.trim()) return;
 
-                                const token = localStorage.getItem('token');
+                                const token = localStorage.getItem('user_token_swing');
                                 
                                 try {
                                     const res = await fetch('http://localhost:2026/api/comments', {
@@ -83,7 +83,7 @@ export function CommentFunc({ comment, argumentId, onAddReply}: CommentFuncProps
                                         },
                                         body: JSON.stringify({
                                             argument_id: Number(argumentId), 
-                                            parent_id: comment.id === "root-id" ? null : parseInt(comment.id),
+                                            parent_id: processedComment.id === "root-id" ? null : parseInt(processedComment.id),
                                             content: replyText
                                         }),
                                     });
@@ -94,7 +94,7 @@ export function CommentFunc({ comment, argumentId, onAddReply}: CommentFuncProps
 
                                     const savedData = await res.json();
 
-                                    onAddReply(comment.id, {
+                                    onAddReply(processedComment.id, {
                                         id: savedData.id,
                                         content: replyText,
                                         created_at: savedData.created_at
@@ -112,10 +112,10 @@ export function CommentFunc({ comment, argumentId, onAddReply}: CommentFuncProps
                 )}
             </div>
 
-            {!isCollapsed && comment.replies && comment.replies.length > 0 && (
+            {!isCollapsed && processedComment.replies && processedComment.replies.length > 0 && (
                 <div className="ml-4 pl-3 border-l-2 border-zinc-800 flex flex-col gap-2">
-                    {comment.replies.map((reply) => (
-                        <CommentFunc key={reply.id} comment={reply} argumentId={argumentId} onAddReply={onAddReply} />
+                    {processedComment.replies.map((check) => (
+                        <CommentFunc key={processedComment.id} processedComment={check} argumentId={argumentId} onAddReply={onAddReply} />
                     ))}
                 </div>
             )}
@@ -133,7 +133,7 @@ export function PrimaryCommentInput({ argumentId, onAddReply }: PrimaryCommentIn
     const [isLoggedIn, setIsLoggedIn] = useState(false);
 
     useEffect(() => {
-        const token = localStorage.getItem('token');
+        const token = localStorage.getItem('user_token_swing');
         if (token) setIsLoggedIn(true);
     }, []);
 
@@ -159,7 +159,7 @@ export function PrimaryCommentInput({ argumentId, onAddReply }: PrimaryCommentIn
                 onClick={async () => {
                     if (!primaryText.trim()) return;
 
-                    const token = localStorage.getItem('token');
+                    const token = localStorage.getItem('user_token_swing');
 
                     try {
                         const res = await fetch('http://localhost:2026/api/comments', {

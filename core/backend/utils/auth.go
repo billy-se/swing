@@ -63,7 +63,7 @@ func AesGo(email string) (string, error) {
 		return "", err
 	}
 
-	encrypted := gcm.Seal(nonce, nonce, []byte(email), nil)
+	encrypted := gcm.Seal(nil, nonce, []byte(email), nil)
 	return hex.EncodeToString(encrypted), nil
 }
 

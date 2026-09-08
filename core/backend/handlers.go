@@ -22,73 +22,46 @@ type contextKey string
 
 const userIDKey contextKey = "user_id"
 
-var jwtSecret = []byte("your_super_secret_key_change_this")
+var jwtSecret = []byte(os.Getenv("JWTSECRET"))
 
 func (a *App) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" {
-			http.Error(w, "Missing authorization header", http.StatusUnauthorized)
-			return
-		}
+    return func(w http.ResponseWriter, r *http.Request) {
+        authHeader := r.Header.Get("Authorization")
+        if authHeader == "" {
+            http.Error(w, "Missing authorization header", http.StatusUnauthorized)
+            return
+        }
 
-		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-		if tokenString == authHeader || tokenString == "" {
-			http.Error(w, "Invalid authorization format", http.StatusUnauthorized)
-			return
-		}
+        tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+        if tokenString == authHeader || tokenString == "" {
+            http.Error(w, "Invalid authorization format", http.StatusUnauthorized)
+            return
+        }
 
-		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, fmt.Errorf("unexpected signing method")
-			}
-			return jwtSecret, nil
-		})
+        userID, err := a.parseToken(tokenString)
+        if err != nil {
+            http.Error(w, err.Error(), http.StatusUnauthorized)
+            return
+        }
 
-		if err != nil || !token.Valid {
-			http.Error(w, "Invalid or expired token", http.StatusUnauthorized)
-			return
-		}
-
-		claims, ok := token.Claims.(jwt.MapClaims)
-		if !ok {
-			http.Error(w, "Invalid token claims", http.StatusUnauthorized)
-			return
-		}
-
-		userIDFloat, ok := claims["user_id"].(float64)
-		if !ok {
-			http.Error(w, "Invalid user ID in token", http.StatusUnauthorized)
-			return
-		}
-
-		userID := int(userIDFloat)
-
-		ctx := context.WithValue(r.Context(), userIDKey, userID)
-		next(w, r.WithContext(ctx))
-	}
+        ctx := context.WithValue(r.Context(), userIDKey, userID)
+        next(w, r.WithContext(ctx))
+    }
 }
 
-func generateJWT(userID int) string {
+func generateJWT(userID int) (string, error) {
 	claims := jwt.MapClaims{
 		"user_id": userID,
 		"exp":     time.Now().Add(time.Hour * 24).Unix(),
 	}
 
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString(jwtSecret)
-	if err != nil {
-		log.Printf("JWT generation error: %v", err)
-		return ""
-	}
-
-	return tokenString
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)//it is here roles and permissions applied
+	return token.SignedString(jwtSecret)
 }
 
 type ArgumentInput struct {
 	Title   string `json:"title"`
 	Content string `json:"content"`
-	Author string `json:"author"`
 }
 
 type RegisterInput struct {
@@ -110,11 +83,6 @@ type ArgumentResponse struct {
 	LogicScore int             `json:"logic_score"`
 	CreatedAt  string          `json:"created_at"`
 	Comments   []*CommentInput `json:"comments"`
-}
-
-type AuditResponse struct {
-	Score  int    `json:"score"`
-	Review string `json:"review"`
 }
 
 func (a *App) handleHealthCheck(w http.ResponseWriter, r *http.Request) {
@@ -162,10 +130,14 @@ func (a *App) handleCreateArgument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	botResponseText, err := CallBotAgent(input.Content)
-	var score int = 50
+	var score int = 75
+	var reviewContent string = ""
+	var botCommentID int = 0
+	var botCommentCreatedAt string = ""
+	/*botResponseText, err := CallBotAgent(input.Title, input.Content)//needs to 
+	//score here
 	var reviewContent = "Automated security audit failed to generate review."
-
+	var score int = 50
 	if err == nil {
 		var audit AuditResponse
 		cleanedJSON := cleanJSONResponse(botResponseText)
@@ -177,7 +149,7 @@ func (a *App) handleCreateArgument(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		log.Printf("Bot agent call error: %v", err)
-	}
+	}*/
 
 	query := `
 		INSERT INTO arguments (title, content, user_id, logic_score, author) 
@@ -195,7 +167,7 @@ func (a *App) handleCreateArgument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var botCommentID int
+	/*var botCommentID int
 	var botCommentCreatedAt string
 	if reviewContent != "" {
 		commentQuery := `INSERT INTO comments (argument_id, user_id, author, content) VALUES ($1, NULL, $2, $3) RETURNING id, created_at`
@@ -203,12 +175,12 @@ func (a *App) handleCreateArgument(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			log.Printf("Failed to save bot review comment: %v", err)
 		}
-	}
+	}*/
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 
-	var initialComments []interface{}
+	var initialComments []interface{}// slice of empty array
 	if reviewContent != "" {
 		initialComments = []interface{}{
 			map[string]interface{}{
@@ -237,6 +209,9 @@ func (a *App) handleCreateArgument(w http.ResponseWriter, r *http.Request) {
 		"logic_score": logicScore,
 		"author":      username,
 		"created_at":  createdAt,
+		"title": input.Title,
+		"content": input.Content,
+		"comments": initialComments,
 	})
 
 	msg, _ := json.Marshal(map[string]interface{}{
@@ -525,8 +500,8 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tokenString := generateJWT(user.Id)
-	if tokenString == "" {
+	tokenString, err := generateJWT(user.Id)
+	if err != nil {
 		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
 		return
 	}
@@ -658,9 +633,11 @@ func NewHub() *Hub {
 func (a *App) WebSocketHandler(w http.ResponseWriter, r *http.Request){
 	token := r.URL.Query().Get("token")
 
-	if token == ""{
-		http.Error(w, "Unaothorized", http.StatusUnauthorized)
-		return
+	if token != "" && token != "null" && token != "undefined" {
+		_, err := a.parseToken(token)
+		if err != nil{
+			log.Printf("WebSocket viewer mode failed", err)
+		}
 	}
 
 	connection, err := websocket.Accept(w, r, &websocket.AcceptOptions{
@@ -733,4 +710,29 @@ func (h *Hub) Run() {
 			h.mu.Unlock()
 		}
 	}
+}
+
+func (a *App) parseToken(tokenString string) (int, error) {
+    token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+        if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+            return nil, fmt.Errorf("unexpected signing method")
+        }
+        return jwtSecret, nil
+    })
+
+    if err != nil || !token.Valid {
+        return 0, fmt.Errorf("invalid or expired token")
+    }
+
+    claims, ok := token.Claims.(jwt.MapClaims)
+    if !ok {
+        return 0, fmt.Errorf("invalid token claims")
+    }
+
+    userIDFloat, ok := claims["user_id"].(float64)
+    if !ok {
+        return 0, fmt.Errorf("invalid user ID in token")
+    }
+
+    return int(userIDFloat), nil
 }

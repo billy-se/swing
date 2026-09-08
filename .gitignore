@@ -8,3 +8,4 @@ phase.md
 
 core/frontend/.env*.local
 .vscode
+core/backend/.env*.local

@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 
 //outside random words
 const words = ["PAPER", "DOOR", "THIN", "GRASS", "GRAY", "MINE", "CHALK", "CAT", "DOG", "RUN", "FAST", "BIG", "RED", "SUN", "HAT", "CUP", "PEN", "BOX", "CAR", "SKY", "SIT", "MAP", "NET", "BED", "TOY", "PIG", "PAN"];
+const PORT = process.env.NEXT_PUBLIC_PORT || '2026';
 
 const surrealWords = () => {
   const dex = Math.floor(Math.random() * words.length);
@@ -37,7 +38,7 @@ export default function AuthPage() {
     };
 
     pickMe();
-    return () => clearInterval(timeoutId);
+    return () => clearTimeout(timeoutId);
   },[]);
 
   useEffect(() => {
@@ -58,15 +59,20 @@ export default function AuthPage() {
     setLoginMessage('');
     setError('');
     
-    if (!email || !password){
-      setError('PLEASE FILL or COMPLETE')
+    if (!email || !password || /\s/.test(email)){
+      setError('PLEASE FILL (no space) or COMPLETE');
       return;
+    }
+
+    if(!email.endsWith("@gmail.com")){
+      setError("Email must ends with '@gmail.com'");
+        return;
     }
 
     setLoading(true);
 
     try {
-      const res = await fetch('http://localhost:2026/api/register', {
+      const res = await fetch(`http://localhost:${PORT}/api/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
@@ -104,7 +110,7 @@ export default function AuthPage() {
     }
 
     try {
-      const res = await fetch('http://localhost:2026/api/login', {
+      const res = await fetch(`http://localhost:${PORT}/api/login`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({email,password})
@@ -118,8 +124,8 @@ export default function AuthPage() {
 
       const data = await res.json();
 
-      localStorage.setItem('token', data.token);
-      localStorage.setItem('username', data.username);
+      localStorage.setItem('user_token_swing', data.token);
+      localStorage.setItem('username_swing', data.username);
 
       setLoginMessage('Login Successful');
       router.push('/dashboard');
@@ -183,7 +189,8 @@ export default function AuthPage() {
           <button 
             type="button"
             onClick={() => {
-              localStorage.removeItem('token');
+              localStorage.removeItem('user_token_swing');
+              localStorage.removeItem('username_swing');
               router.push('/dashboard');
             }}
             className="mt-2 text-zinc-500 text-xs hover:text-white underline text-center"
