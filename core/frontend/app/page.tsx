@@ -128,6 +128,7 @@ export default function AuthPage() {
       localStorage.setItem('username_swing', data.username);
 
       setLoginMessage('Login Successful');
+      
       router.push('/dashboard');
     }catch(err: any){
       setError(err.message)

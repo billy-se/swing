@@ -1,1 +1,0 @@
-DROP TABLE IF EXISTS votes_or_reviews;

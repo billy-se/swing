@@ -22,15 +22,19 @@ export default function Home() {
 
     const ws = useRef<WebSocket | null>(null);
     const argumentsListRef = useRef(argumentsList);
-    argumentsListRef.current =  argumentsList;
+    argumentsListRef.current = argumentsList;
 
     const mapComments = (commentsList: any[]): Comment[] => {
         if (!commentsList) return [];
         return commentsList.map((comment: any) => ({
             id: String(comment.id),
+            user_id: comment.user_id || comment.userId || comment.author_id,
             author: comment.author || "ANONYMOUS",
             content: comment.content,
             timestamp: comment.timestamp,
+            score: comment.score || 0,
+            fire_count: comment.fire_count || 0,
+            user_has_fired: comment.user_has_fired || false, // <-- Add this
             replies: mapComments(comment.replies || comment.comments || [])
         })).reverse();
     };
@@ -52,51 +56,54 @@ export default function Home() {
 
         ws.current = new WebSocket(wsUrl);
 
-        ws.current.onopen = () => {
-                
-        };
+        ws.current.onopen = () => {};
 
         ws.current.onmessage = (Event) => {
-                const data = JSON.parse(Event.data);
+            const data = JSON.parse(Event.data);
 
-                if (data.type === "NEW_ARGUMENT") {
-                    const rawPayload = data.payload || data;
-                    const newArg: Argument = {
-                        ...rawPayload,
-                        comments: mapComments(rawPayload.comments || [])
-                    };
+            if (data.type === "NEW_ARGUMENT") {
+                const rawPayload = data.payload || data;
+                const newArg: Argument = {
+                    ...rawPayload,
+                    comments: mapComments(rawPayload.comments || [])
+                };
 
-                    setArgumentsList(prev => {
-                        if (prev.some(arg => arg.id === newArg.id)) return prev;
-                        return [newArg, ...prev];
+                setArgumentsList(prev => {
+                    const currentList = argumentsListRef.current;
+                    if (currentList.some(arg => arg.id === newArg.id)) return currentList;
+                    return [newArg, ...currentList];
+                });
+            } else if (data.type === "NEW_COMMENT") {
+                const newComment: Comment = {
+                    id: String(data.payload.id),
+                    user_id: data.payload.user_id || data.payload.userId || data.payload.author_id,
+                    author: data.payload.author || "ANONYMOUS",
+                    content: data.payload.content,
+                    timestamp: data.payload.timestamp || 
+                        (data.payload.created_at ? data.payload.created_at.split('.')[0].replace('T', ' ') : "Just now"),
+                    score: data.payload.score || 0,
+                    fire_count: data.payload.fire_count || 0,
+                    replies: []
+                };
+
+                const argumentId = String(data.payload.argument_id || data.payload.arg_id);
+                const parentId = data.payload.parent_id;
+
+                const addReplyRecursive = (list: Comment[]): Comment[] => {
+                    return list.map(comment => {
+                        if (comment.id === String(parentId)) {
+                            if (comment.replies?.some(r => r.id === newComment.id)) return comment;
+                            return { ...comment, replies: [newComment, ...(comment.replies || [])] };
+                        }
+                        if (comment.replies && comment.replies.length > 0) {
+                            return { ...comment, replies: addReplyRecursive(comment.replies) };
+                        }
+                        return comment;
                     });
-                } else if (data.type === "NEW_COMMENT") {
-                    const newComment: Comment = {
-                        id: String(data.payload.id),
-                        author: data.payload.author || "ANONYMOUS",
-                        content: data.payload.content,
-                        timestamp: data.payload.timestamp || 
-                            (data.payload.created_at ? data.payload.created_at.split('.')[0].replace('T', ' ') : "Just now"),
-                        replies: []
-                    };
+                };
 
-                    const argumentId = String(data.payload.argument_id || data.payload.arg_id);
-                    const parentId = data.payload.parent_id;
-
-                    const addReplyRecursive = (list: Comment[]): Comment[] => {
-                        return list.map(comment => {
-                            if (comment.id === String(parentId)) {
-                                if (comment.replies?.some(r => r.id === newComment.id)) return comment;
-                                return { ...comment, replies: [newComment, ...(comment.replies || [])] };
-                            }
-                            if (comment.replies && comment.replies.length > 0) {
-                                return { ...comment, replies: addReplyRecursive(comment.replies) };
-                            }
-                            return comment;
-                        });
-                    };
-
-                    setArgumentsList(prev => prev.map(arg => {
+                setArgumentsList(() => {
+                    return argumentsListRef.current.map(arg => {
                         if (String(arg.id) === argumentId) {
                             const currentComments = arg.comments || [];
                             if (parentId == null || parentId === undefined || parentId === "root-id") {
@@ -106,13 +113,60 @@ export default function Home() {
                             return { ...arg, comments: addReplyRecursive(currentComments) };
                         }
                         return arg;
-                    }));
-                }
-            };
+                    });
+                });
+            } else if (data.type === "SWING_SCORE_UPDATE") {
+                const payload = data.payload || data;
+                const targetCommentId = String(payload.comment_id || payload.commentId || payload.id);
+                const actionUserId = payload.user_id;
+
+                const currentUserId = (() => {
+                    try {
+                        const token = localStorage.getItem('user_token_swing');
+                        if (!token) return null;
+                        const jwtPayload = JSON.parse(atob(token.split('.')[1]));
+                        return jwtPayload.user_id || jwtPayload.id;
+                    } catch {
+                        return null;
+                    }
+                })();
+
+                const updateFireRecursive = (list: Comment[]): Comment[] => {
+                    return list.map(comment => {
+                        if (comment.id === targetCommentId) {
+                            const isCurrentUsersAction = actionUserId && Number(actionUserId) === Number(currentUserId);
+                            
+                            return { 
+                                ...comment, 
+                                fire_count: payload.fire_count !== undefined ? payload.fire_count : comment.fire_count,
+                                user_has_fired: isCurrentUsersAction ? !comment.user_has_fired : comment.user_has_fired
+                            };
+                        }
+                        if (comment.replies && comment.replies.length > 0) {
+                            return { ...comment, replies: updateFireRecursive(comment.replies) };
+                        }
+                        return comment;
+                    });
+                };
+
+                setArgumentsList(() => {
+                    return argumentsListRef.current.map(arg => {
+                        const updatedComments = updateFireRecursive(arg.comments || []);
+                        return { ...arg, comments: updatedComments };
+                    });
+                });
+            }
+        };
 
         const loadArguments = async () => {
             try {
-                const res = await fetch(`http://localhost:${PORT}/api/arguments`);
+                const token = localStorage.getItem('user_token_swing');
+                const headers: HeadersInit = {};
+                if (token && token !== 'null' && token !== 'undefined') {
+                    headers['Authorization'] = `Bearer ${token}`;
+                }
+
+                const res = await fetch(`http://localhost:${PORT}/api/arguments`, { headers });
                 if (!res.ok) {
                     throw new Error('Failed to fetch arguments');
                 }
@@ -152,40 +206,53 @@ export default function Home() {
         }));
     };
 
-    const handleAddReply = (argumentId: string, incomingComment: { id: number; content: string; created_at: string }) => {
+    const handleAddReply = (argumentId: string, incomingComment: { id: number; content: string; created_at: string; user_id?: number }) => {
         if (!selectedArgumentId) return;
 
+        const currentUserId = (() => {
+            try {
+                const token = localStorage.getItem('user_token_swing');
+                if (!token) return null;
+                const payload = JSON.parse(atob(token.split('.')[1]));
+                return payload.user_id || payload.id;
+            } catch {
+                return null;
+            }
+        })();
+
         const processedComment: Comment = {
-        id: String(incomingComment.id),
-        author: currentUsername,
-        content: incomingComment.content,
-        timestamp: incomingComment.created_at ? incomingComment.created_at.split('.')[0].replace('T', ' ') : "Just now",
-        replies: []
-    };
+            id: String(incomingComment.id),
+            user_id: incomingComment.user_id || currentUserId,
+            author: currentUsername,
+            content: incomingComment.content,
+            timestamp: incomingComment.created_at ? incomingComment.created_at.split('.')[0].replace('T', ' ') : "Just now",
+            fire_count: 0,
+            replies: []
+        };
 
-    const addReplyRecursive = (commentList: Comment[]): Comment[] => {
-        return commentList.map(currentComment => {
+        const addReplyRecursive = (commentList: Comment[]): Comment[] => {
+            return commentList.map(currentComment => {
+                if (currentComment.id === String(argumentId)) {
+                    if (currentComment.replies?.some(r => r.id === processedComment.id)) return currentComment;
+                    return { ...currentComment, replies: [processedComment, ...(currentComment.replies || [])] };
+                }
 
-            if (currentComment.id === String(argumentId)) {
-                if (currentComment.replies?.some(r => r.id === processedComment.id)) return currentComment;
-                return { ...currentComment, replies: [processedComment, ...(currentComment.replies || [])] };
+                if (currentComment.replies && currentComment.replies.length > 0) {
+                    return { ...currentComment, replies: addReplyRecursive(currentComment.replies) };
+                }
+
+                return currentComment;
+            });
+        };
+
+        setArgumentsList(existingArgument => existingArgument.map(processedArgument => {
+            if (processedArgument.id === selectedArgumentId) {
+                const currentComments = processedArgument.comments || [];
+                
+                return { ...processedArgument, comments: addReplyRecursive(currentComments) };
             }
-
-            if (currentComment.replies && currentComment.replies.length > 0) {
-                return { ...currentComment, replies: addReplyRecursive(currentComment.replies) };
-            }
-
-            return currentComment;
-        });
-    };
-
-    setArgumentsList(existingArgument => existingArgument.map(processedArgument => {
-        if (processedArgument.id === selectedArgumentId) {
-            const currentComments = processedArgument.comments || [];
-            return { ...processedArgument, comments: addReplyRecursive(currentComments) };
-        }
-        return processedArgument;
-    }));
+            return processedArgument;
+        }));
     };
 
     const handleCreateSubmit = async (e: React.SyntheticEvent) => {
@@ -212,7 +279,7 @@ export default function Home() {
 
             const newArgument = await res.json();
 
-            setArgumentsList(existingArguments => {//shortcut
+            setArgumentsList(existingArguments => {
                 const processedArgument = {
                     ...newArgument,
                     comments: mapComments(newArgument.comments || [])
@@ -282,7 +349,7 @@ export default function Home() {
                                 <h2 className="text-sm font-semibold text-zinc-100">
                                     {check.title}
                                 </h2>
-                                <p className="text-xs text-zinc-400 leading-relaxed">
+                                <p className="text-xs text-zinc-400 leading-relaxed whitespace-pre-wrap">
                                     {check.content}
                                 </p>
                                 <div className="flex justify-between items-center pt-3 border-t border-zinc-900 text-xs">
@@ -338,10 +405,10 @@ export default function Home() {
                 </div>
 
                 <ReviewModal 
-                    isReviewOpen={isReviewOpen}//gateway to open review modal
-                    selectedArgument={selectedArgument}//full list of arguments
-                    setIsReviewOpen={setIsReviewOpen}//close button
-                    handleAddReply={handleAddReply}//xxx
+                    isReviewOpen={isReviewOpen}
+                    selectedArgument={selectedArgument}
+                    setIsReviewOpen={setIsReviewOpen}
+                    handleAddReply={handleAddReply}
                 />
 
                 {isLoggedIn && (

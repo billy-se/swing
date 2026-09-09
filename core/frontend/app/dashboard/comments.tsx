@@ -4,24 +4,78 @@ import { Comment } from './types';
 interface CommentFuncProps {
     processedComment: Comment;
     argumentId: string | number;
-    onAddReply: (commentId: string, savedComment: { id: number; content: string; created_at: string }) => void;
+    onAddReply: (commentId: string, savedComment: { id: number; content: string; created_at: string; user_id?: number; author?: string }) => void;
 }
 
 export function CommentFunc({ processedComment, argumentId, onAddReply}: CommentFuncProps) {
-
     const [isReplying, setIsReplying] = useState(false);
     const [replyText, setReplyText] = useState("");
     const [isLoggedIn, setIsLoggedIn] = useState(false);
+    const [currentUserId, setCurrentUserId] = useState<number | null>(null);
+    const [currentUsername, setCurrentUsername] = useState<string>("");
     const [isCollapsed, setIsCollapsed] = useState(true);
+    
+    const [fireCount, setFireCount] = useState(processedComment.fire_count || processedComment.score || 0); 
+
+    useEffect(() => {
+        setFireCount(processedComment.fire_count || processedComment.score || 0);
+    }, [processedComment.fire_count, processedComment.score]);
 
     useEffect(() => {
         const token = localStorage.getItem('user_token_swing');
-        //const user = localStorage.getItem('username_swing');
-        if (token) setIsLoggedIn(true);
+        if (token && token !== 'null' && token !== 'undefined') {
+            setIsLoggedIn(true);
+            try {
+                const payload = JSON.parse(atob(token.split('.')[1]));
+                setCurrentUserId(payload.user_id || payload.id);
+                setCurrentUsername(payload.username || payload.author || "");
+            } catch (err) {
+                console.error("Failed to parse user token:", err);
+            }
+        }
     }, []);
+
+    const handleFireClick = async () => {
+        if (!processedComment.id || processedComment.id === "root-id") return;
+
+        const token = localStorage.getItem('user_token_swing');
+        if (!token || token === 'null' || token === 'undefined') return;
+
+        const port = process.env.NEXT_PUBLIC_PORT || '2026';
+
+        try {
+            const res = await fetch(`http://localhost:${port}/api/comments/fire`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({ 
+                    comment_id: Number(processedComment.id) 
+                })
+            });
+
+            if (!res.ok) {
+                const errText = await res.text();
+                console.error("Fire reaction error -> Status:", res.status, "Message:", errText);
+                return;
+            }
+
+            const data = await res.json();
+            
+            if (data && data.fire_count !== undefined) {
+                setFireCount(data.fire_count);
+            }
+        } catch (err) {
+            console.error("Error sending fire reaction:", err);
+        }
+    };
 
     const isLongText = processedComment.content.length > 150;
     const [isExpandedLong, setIsExpandedLong] = useState(false);
+    
+    const commentUserId = (processedComment as any).user_id ?? (processedComment as any).userId;
+    const isOwnComment = currentUserId !== null && commentUserId !== undefined && Number(currentUserId) === Number(commentUserId);
 
     return (
         <div className="flex flex-col gap-2 my-2 text-xs">
@@ -50,13 +104,22 @@ export function CommentFunc({ processedComment, argumentId, onAddReply}: Comment
                     </button>
                 )}
 
-                {/* Only show reply button if logged in */}
-                {isLoggedIn && (
-                    <button
-                        onClick={() => setIsReplying(!isReplying)} className="text-[10px] text-zinc-400 hover:text-emerald-400 mt-2 block">
-                        {isReplying ? "Cancel" : "[+ Reply]"}
-                    </button>
-                )}
+                <div className="flex items-center gap-4 mt-2">
+                    {isLoggedIn && !isOwnComment && (
+                        <button
+                            onClick={handleFireClick}
+                            className="text-[10px] flex items-center gap-1 text-zinc-400 hover:text-orange-400 transition-colors">
+                            🔥 {fireCount} Fire
+                        </button>
+                    )}
+
+                    {isLoggedIn && (
+                        <button
+                            onClick={() => setIsReplying(!isReplying)} className="text-[10px] text-zinc-400 hover:text-emerald-400 block">
+                            {isReplying ? "Cancel" : "[+ Reply]"}
+                        </button>
+                    )}
+                </div>
 
                 {isReplying && isLoggedIn && (
                     <div className="mt-3 pt-3 border-t border-zinc-800 flex flex-col gap-2">
@@ -71,7 +134,6 @@ export function CommentFunc({ processedComment, argumentId, onAddReply}: Comment
                         <button
                             onClick={async () => {
                                 if (!replyText.trim()) return;
-
                                 const token = localStorage.getItem('user_token_swing');
                                 
                                 try {
@@ -83,7 +145,7 @@ export function CommentFunc({ processedComment, argumentId, onAddReply}: Comment
                                         },
                                         body: JSON.stringify({
                                             argument_id: Number(argumentId), 
-                                            parent_id: processedComment.id === "root-id" ? null : parseInt(processedComment.id),
+                                            parent_id: processedComment.id === "root-id" ? null : parseInt(String(processedComment.id)),
                                             content: replyText
                                         }),
                                     });
@@ -94,10 +156,12 @@ export function CommentFunc({ processedComment, argumentId, onAddReply}: Comment
 
                                     const savedData = await res.json();
 
-                                    onAddReply(processedComment.id, {
+                                    onAddReply(String(processedComment.id), {
                                         id: savedData.id,
                                         content: replyText,
-                                        created_at: savedData.created_at
+                                        created_at: savedData.created_at,
+                                        user_id: currentUserId ?? undefined,
+                                        author: currentUsername || savedData.author
                                     });
                                     setReplyText("");
                                     setIsReplying(false);
@@ -115,7 +179,7 @@ export function CommentFunc({ processedComment, argumentId, onAddReply}: Comment
             {!isCollapsed && processedComment.replies && processedComment.replies.length > 0 && (
                 <div className="ml-4 pl-3 border-l-2 border-zinc-800 flex flex-col gap-2">
                     {processedComment.replies.map((check) => (
-                        <CommentFunc key={processedComment.id} processedComment={check} argumentId={argumentId} onAddReply={onAddReply} />
+                        <CommentFunc key={check.id} processedComment={check} argumentId={argumentId} onAddReply={onAddReply} />
                     ))}
                 </div>
             )}
@@ -125,16 +189,27 @@ export function CommentFunc({ processedComment, argumentId, onAddReply}: Comment
 
 interface PrimaryCommentInputProps {
     argumentId: string | number;
-    onAddReply: (commentId: string, savedComment: { id: number; content: string; created_at: string }) => void;
+    onAddReply: (commentId: string, savedComment: { id: number; content: string; created_at: string; user_id?: number; author?: string }) => void;
 }
 
 export function PrimaryCommentInput({ argumentId, onAddReply }: PrimaryCommentInputProps) {
     const [primaryText, setPrimaryText] = useState("");
     const [isLoggedIn, setIsLoggedIn] = useState(false);
+    const [currentUserId, setCurrentUserId] = useState<number | null>(null);
+    const [currentUsername, setCurrentUsername] = useState<string>("");
 
     useEffect(() => {
         const token = localStorage.getItem('user_token_swing');
-        if (token) setIsLoggedIn(true);
+        if (token) {
+            setIsLoggedIn(true);
+            try {
+                const payload = JSON.parse(atob(token.split('.')[1]));
+                setCurrentUserId(payload.user_id || payload.id);
+                setCurrentUsername(payload.username || payload.author || "");
+            } catch (err) {
+                console.error("Failed to parse user token:", err);
+            }
+        }
     }, []);
 
     if (!isLoggedIn) {
@@ -162,7 +237,7 @@ export function PrimaryCommentInput({ argumentId, onAddReply }: PrimaryCommentIn
                     const token = localStorage.getItem('user_token_swing');
 
                     try {
-                        const res = await fetch('http://localhost:2026/api/comments', {
+                        const res =     await fetch('http://localhost:2026/api/comments', {
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json',
@@ -185,7 +260,9 @@ export function PrimaryCommentInput({ argumentId, onAddReply }: PrimaryCommentIn
                         onAddReply("root-id", {
                             id: savedData.id,
                             content: primaryText,
-                            created_at: savedData.created_at
+                            created_at: savedData.created_at,
+                            user_id: currentUserId ?? undefined,
+                            author: currentUsername || savedData.author
                         });
                         setPrimaryText("");
                     } catch (err) {

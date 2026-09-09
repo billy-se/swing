@@ -4,5 +4,6 @@ CREATE TABLE IF NOT EXISTS users (
     email TEXT UNIQUE NOT NULL,
     email_hash VARCHAR(64) UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
+    logic_score INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

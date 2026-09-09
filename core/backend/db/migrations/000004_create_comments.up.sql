@@ -5,5 +5,7 @@ CREATE TABLE IF NOT EXISTS comments(
     parent_id BIGINT REFERENCES comments(id) ON DELETE CASCADE,
     user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
     content TEXT NOT NULL,
+    score INTEGER DEFAULT 0,
+    is_fire_triggered BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
