@@ -112,6 +112,32 @@ func cleanJSONResponse(input string) string {
 	return strings.TrimSpace(input)
 }
 
+func (a *App) handleGetProfile(w http.ResponseWriter, r *http.Request) {
+    // 1. Get the user ID from the request context (assuming your auth middleware sets it)
+    userId := r.Context().Value(userIDKey) 
+    if userId == nil {
+        http.Error(w, "Unauthorized", http.StatusUnauthorized)
+        return
+    }
+
+    var username string
+    var logicScore int
+    query := `SELECT username, logic_score FROM users WHERE id = $1`
+    
+    err := a.DB.QueryRowContext(r.Context(), query, userId).Scan(&username, &logicScore)
+    if err != nil {
+        http.Error(w, "User not found", http.StatusNotFound)
+        return
+    }
+
+    // 3. Send the data back as JSON
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(map[string]any{
+        "username":    username,
+        "logic_score": logicScore,
+    })
+}
+
 func (a *App) handleCreateArgument(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -138,7 +164,7 @@ func (a *App) handleCreateArgument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var score int = 75
+	var score int = 0
 	var reviewContent string = ""
 	var botCommentID int = 0
 	var botCommentCreatedAt string = ""
@@ -456,11 +482,13 @@ func (a *App) handleRegister(w http.ResponseWriter, r *http.Request) {
 	name := generateNames()
 	fmt.Println("DEBUG: Generate ->", name)
 
-	query := `INSERT INTO users (email, email_hash, password_hash, username) VALUES ($1, $2, $3, $4) RETURNING id, created_at`
+    var defaultScore = 1000
+
+	query := `INSERT INTO users (email, email_hash, password_hash, username, logic_score) VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at`
 	var id int
 	var createdAt time.Time
 
-	err = a.DB.QueryRow(query, secureEmail, decryptEmail, hashedPassword, name).Scan(&id, &createdAt)
+	err = a.DB.QueryRow(query, secureEmail, decryptEmail, hashedPassword, name, defaultScore).Scan(&id, &createdAt)
 	if err != nil {
 		log.Printf("Database insert errorrr: %v", err)
 		http.Error(w, "Email might already be taken", http.StatusBadRequest)
@@ -641,15 +669,14 @@ func (a *App) handleFireReaction(w http.ResponseWriter, r *http.Request) {
         tx.QueryRow(`SELECT COUNT(*) FROM comment_reactions WHERE comment_id = $1 AND reaction_type = 'fire'`, req.CommentID).Scan(&fireVotes)
 
         if totalComments > 0 && (float64(fireVotes)/float64(totalComments)) >= 0.40 {
-            tx.Exec(`UPDATE comments SET is_fire_triggered = TRUE WHERE id = $1`, req.CommentID)
-
             var creatorID int64
             tx.QueryRow(`SELECT user_id FROM arguments WHERE id = $1`, argumentID).Scan(&creatorID)
 
-            tx.Exec(`UPDATE users SET logic_score = logic_score + 50 WHERE id = $1`, commentUserID)
-            tx.Exec(`UPDATE users SET logic_score = logic_score - 10 WHERE id = $1`, creatorID)
-            tx.Exec(`UPDATE arguments SET logic_score = logic_score - 10 WHERE id = $1`, argumentID)
-            tx.Exec(`UPDATE comments SET score = score - 5 WHERE argument_id = $1 AND id != $2`, argumentID, req.CommentID)
+            if err := a.ApplyConsensusDeflationTx(tx, req.CommentID, argumentID, creatorID, commentUserID); err != nil {
+                println("Deflation Error Details:", err.Error())
+                http.Error(w, "Failed to process consensus deflation: "+err.Error(), http.StatusInternalServerError)
+                return
+            }
         }
     }
 
@@ -668,7 +695,7 @@ func (a *App) handleFireReaction(w http.ResponseWriter, r *http.Request) {
                 "comment_id":  req.CommentID,
                 "argument_id": argumentID,
                 "fire_count":  newFireCount,
-				"user_id": userID,
+                "user_id": userID,
             },
         })
         a.hub.broadcast <- broadcastData
@@ -676,9 +703,9 @@ func (a *App) handleFireReaction(w http.ResponseWriter, r *http.Request) {
 
     w.WriteHeader(http.StatusOK)
     json.NewEncoder(w).Encode(map[string]interface{}{
-		"status": "swing scoring processed",
-		"fire_count": newFireCount,
-	})
+        "status": "swing scoring processed",
+        "fire_count": newFireCount,
+    })
 }
 
 func (a *App) handleCreateComment(w http.ResponseWriter, r *http.Request) {

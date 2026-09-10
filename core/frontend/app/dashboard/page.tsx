@@ -19,6 +19,7 @@ export default function Home() {
     const [error, setError] = useState('');
     const [isLoggedIn, setIsLoggedIn] = useState(false);
     const [currentUsername, setCurrentUsername] = useState('GUEST');
+    const [logicScore, setLogicScore] = useState(0);
 
     const ws = useRef<WebSocket | null>(null);
     const argumentsListRef = useRef(argumentsList);
@@ -34,20 +35,29 @@ export default function Home() {
             timestamp: comment.timestamp,
             score: comment.score || 0,
             fire_count: comment.fire_count || 0,
-            user_has_fired: comment.user_has_fired || false, // <-- Add this
+            user_has_fired: comment.user_has_fired || false,
             replies: mapComments(comment.replies || comment.comments || [])
         })).reverse();
     };
 
     useEffect(() => {
         const token = localStorage.getItem('user_token_swing');
-        const user = localStorage.getItem('username_swing');
 
         if (token && token !== 'null' && token !== 'undefined') {
             setIsLoggedIn(true);
-        }
-        if (user) {
-            setCurrentUsername(user);
+
+            fetch(`http://localhost:${PORT}/api/user/profile`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            })
+            .then(async res => {
+                if (!res.ok) throw new Error('Failed to fetch profile');
+                return res.json();
+            })
+            .then(data => {
+                if (data.username) setCurrentUsername(data.username);
+                if (data.logic_score !== undefined) setLogicScore(data.logic_score);
+            })
+            .catch(err => console.error("Failed to load profile", err));
         }
 
         const wsUrl = (token && token !== 'null' && token !== 'undefined')
@@ -56,10 +66,8 @@ export default function Home() {
 
         ws.current = new WebSocket(wsUrl);
 
-        ws.current.onopen = () => {};
-
-        ws.current.onmessage = (Event) => {
-            const data = JSON.parse(Event.data);
+        ws.current.onmessage = (event) => {
+            const data = JSON.parse(event.data);
 
             if (data.type === "NEW_ARGUMENT") {
                 const rawPayload = data.payload || data;
@@ -167,12 +175,9 @@ export default function Home() {
                 }
 
                 const res = await fetch(`http://localhost:${PORT}/api/arguments`, { headers });
-                if (!res.ok) {
-                    throw new Error('Failed to fetch arguments');
-                }
+                if (!res.ok) throw new Error('Failed to fetch arguments');
 
                 const data = await res.json();
-
                 const initializedData = data.map((arg: Argument) => ({
                     ...arg,
                     comments: mapComments(arg.comments || [])
@@ -190,21 +195,9 @@ export default function Home() {
                 ws.current.close(1000, 'User session ended');
             }
         };
-
-    }, [isLoggedIn]);
+    }, []);
 
     const selectedArgument = (argumentsList || []).find((arg) => arg.id === selectedArgumentId) ?? null;
-
-    const handleAddComment = (commentData: Comment) => {
-        if (!selectedArgumentId) return;
-
-        setArgumentsList(previousList => previousList.map(arg => {
-            if (arg.id === selectedArgumentId) {
-                return {...arg, comments: [commentData, ...(arg.comments || [])]};
-            }
-            return arg;
-        }));
-    };
 
     const handleAddReply = (argumentId: string, incomingComment: { id: number; content: string; created_at: string; user_id?: number }) => {
         if (!selectedArgumentId) return;
@@ -236,11 +229,9 @@ export default function Home() {
                     if (currentComment.replies?.some(r => r.id === processedComment.id)) return currentComment;
                     return { ...currentComment, replies: [processedComment, ...(currentComment.replies || [])] };
                 }
-
                 if (currentComment.replies && currentComment.replies.length > 0) {
                     return { ...currentComment, replies: addReplyRecursive(currentComment.replies) };
                 }
-
                 return currentComment;
             });
         };
@@ -248,7 +239,6 @@ export default function Home() {
         setArgumentsList(existingArgument => existingArgument.map(processedArgument => {
             if (processedArgument.id === selectedArgumentId) {
                 const currentComments = processedArgument.comments || [];
-                
                 return { ...processedArgument, comments: addReplyRecursive(currentComments) };
             }
             return processedArgument;
@@ -313,12 +303,8 @@ export default function Home() {
                     
                     <div className="flex items-center gap-6 text-xs border-t sm:border-t-0 border-zinc-800 pt-3 sm:pt-0 w-full sm:w-auto justify-between sm:justify-end">
                         <div>
-                            <span className="text-zinc-500 block text-[10px]">ACCURACY TIER</span>
-                            <span className="text-emerald-400 font-bold">Level 4 (94.2%)</span>
-                        </div>
-                        <div>
-                            <span className="text-zinc-500 block text-[10px]">REVIEW WEIGHT</span>
-                            <span className="text-blue-400 font-bold">1.4x</span>
+                            <span className="text-zinc-500 block text-[10px]">LOGIC SCORE</span>
+                            <span className="text-emerald-400 font-bold">{logicScore}</span>
                         </div>
                     </div>
                 </header>
@@ -332,7 +318,7 @@ export default function Home() {
                                     <button className="text-emerald-400 hover:underline">Recent</button>
                                 </div>
                                 <div className="relative group">
-                                   <button className="hover:text-zinc-200">Top</button>
+                                     <button className="hover:text-zinc-200">Top</button>
                                 </div>
                                 <div className="relative group">
                                     <button className="text-zinc-400 hover:text-zinc-200">WatchList</button>
@@ -412,7 +398,6 @@ export default function Home() {
                 />
 
                 {isLoggedIn && (
-                    <>
                     <CreateArgumentModal
                         isCreateOpen={isCreateOpen}
                         error={error}
@@ -423,7 +408,6 @@ export default function Home() {
                         setIsCreateOpen={setIsCreateOpen}
                         onSubmit={handleCreateSubmit}
                     />
-                    </>
                 )}
             </div>
         </main>

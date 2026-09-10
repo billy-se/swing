@@ -123,6 +123,8 @@ func main() {
 	mux.HandleFunc("/api/comments/fire", app.authMiddleware(app.handleFireReaction))
 	mux.HandleFunc("GET /api/comments", app.handleGetComments)
 
+	mux.HandleFunc("GET /api/user/profile", app.authMiddleware(app.handleGetProfile))
+
 	//mux.HandleFunc("POST /api/arguments", app.handleCreateArgument)
 	//mux.HandleFunc("POST /api/jwt", app.handleJWT)
 	//mux.HandleFunc("GET /api/dashboard", app.handleDashboard)
