@@ -73,4 +73,4 @@ Aggressive Dynamic Scoring v1.0 is a zero-sum, deflationary scoring engine desig
 
 
 
-- Maintains strict skin in the game because new accounts initialize with a 1,000-point baseline, ensuring spammers and bad actors rapidly deplete their capital//can i put like model thing? 
+- Maintains strict skin in the game because new accounts initialize with a 1,000-point baseline, ensuring spammers and bad actors rapidly deplete their capital
