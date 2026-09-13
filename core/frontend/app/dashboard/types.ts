@@ -19,3 +19,10 @@ export interface Argument {
     created_at: string;
     comments?: Comment[];
 }
+
+export interface NotificationItem {
+    id?: string | number;
+    message?: string;
+    content?: string;
+    [key: string]: any;
+}

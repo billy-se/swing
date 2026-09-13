@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { Comment, Argument } from './types';
+import { Comment, Argument, NotificationItem } from './types';
 import { ReviewModal } from './reviewModal';
 import { CreateArgumentModal } from './createModal';
 
@@ -24,6 +24,8 @@ export default function Home() {
     const ws = useRef<WebSocket | null>(null);
     const argumentsListRef = useRef(argumentsList);
     argumentsListRef.current = argumentsList;
+
+    const [notifications, setNotifications] = useState<NotificationItem[]>([]);
 
     const mapComments = (commentsList: any[]): Comment[] => {
         if (!commentsList) return [];
@@ -163,6 +165,9 @@ export default function Home() {
                         return { ...arg, comments: updatedComments };
                     });
                 });
+            } else if (data.type == "NEW_NOTIFICATION"){
+                const newNotif = data.payload || data;
+                setNotifications((prev) => [newNotif, ...prev]);
             }
         };
 
@@ -188,7 +193,26 @@ export default function Home() {
                 console.error("Failed to fetch arguments:", err);
             }
         };
+
+        const loadNotifications = async () => {
+                    const token = localStorage.getItem('user_token_swing');
+                    if(!token || token === 'null' || token === 'undefined') return;
+
+                    try {
+                        const res = await fetch(`http://localhost:${PORT}/api/notifications`, {
+                            headers: { 'Authorization': `Bearer ${token}`}
+                        });
+                        if (res.ok){
+                            const notifData = await res.json();
+                            setNotifications(notifData.notifications || []);
+                        }
+                    }catch(err){
+                        console.error("Failed to fetch initial notifications", err);
+                    }
+                };
+
         loadArguments();
+        loadNotifications();
 
         return () => {
             if (ws.current) {
@@ -292,6 +316,7 @@ export default function Home() {
             <div className="w-full max-w-6xl flex flex-col gap-6">
                 
                 <header className="bg-zinc-950 border border-zinc-800 rounded-lg p-4 md:p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                    
                     <div className="flex items-center gap-3">
                         <div>
                             <h1 className="text-sm font-semibold tracking-widest uppercase text-zinc-200">
@@ -302,6 +327,11 @@ export default function Home() {
                     </div>
                     
                     <div className="flex items-center gap-6 text-xs border-t sm:border-t-0 border-zinc-800 pt-3 sm:pt-0 w-full sm:w-auto justify-between sm:justify-end">
+                        <div>
+                            <span className="text-zinc-500 block text-[10px]">NOTIFICATION</span>
+                            <span className={`font-bold ${notifications.length > 0 ? 'text-emerald-400' : 'text-red-500'}`}> {notifications.length || 0} 🐌</span>
+                        </div>
+                        
                         <div>
                             <span className="text-zinc-500 block text-[10px]">LOGIC SCORE</span>
                             <span className="text-emerald-400 font-bold">{logicScore}</span>

@@ -748,7 +748,41 @@ func (a *App) handleCreateComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+    var ownerID int
+    err = a.DB.QueryRow("SELECT user_id FROM arguments WHERE id = $1", input.ArgumentID).Scan(&ownerID)
+    if err != nil {
+        log.Printf("Failed to find argument owner: %v", err)
+    }
+
+    var notifID int
+    var notifCreatedAt time.Time
+    if err == nil && ownerID != userID {
+        err = a.DB.QueryRow(`INSERT INTO notif (comment_id, user_id) VALUES ($1, $2) RETURNING id, create_at`, id, ownerID).Scan(&notifID, &notifCreatedAt)
+        if err == nil {
+            a.hub.mu.Lock()
+            client, ok := a.hub.clients[ownerID]
+            a.hub.mu.Unlock()
+
+            if ok {
+                notifMsg, _ := json.Marshal(map[string]interface{}{
+                    "type": "NEW_NOTIFICATION",
+                    "payload": map[string]interface{}{
+                        "id": notifID,
+                        "comment_id": id,
+                        "created_at": notifCreatedAt.Format("2006-01-02 15:04:05"),
+                    },
+                })
+                select {
+                case client.send <- notifMsg:
+                default:
+
+                }
+            }
+        }
+    }
+
 	formattedTime := createdAt.Format("2006-01-02 15:04:05")
+
 
 	newComment := map[string]interface{}{
         "id":          fmt.Sprintf("%d", id),
@@ -865,19 +899,12 @@ func EnableCORS(next http.Handler) http.Handler {
 type Client struct{
 	connection *websocket.Conn
 	send chan []byte
-}
-
-type Hub struct {
-	clients    map[*Client]bool
-	broadcast  chan []byte
-	register   chan *Client
-	unregister chan *Client
-	mu         sync.Mutex
+    userId int
 }
 
 func NewHub() *Hub {
 	return &Hub{
-		clients:    make(map[*Client]bool),
+		clients:    make(map[int]*Client),
 		broadcast:  make(chan []byte),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
@@ -904,9 +931,13 @@ func (a *App) WebSocketHandler(w http.ResponseWriter, r *http.Request) {
 
     defer connection.Close(websocket.StatusNormalClosure, "Session ended")
 
+    claims, err := a.parseToken(token)
+    userId := claims
+
     client := &Client{
         connection: connection,
         send:       make(chan []byte, 256),
+        userId: userId,
     }
 
     a.hub.register <- client
@@ -934,28 +965,36 @@ func (a *App) WebSocketHandler(w http.ResponseWriter, r *http.Request) {
     }
 }
 
+type Hub struct {
+	clients    map[int]*Client
+	broadcast  chan []byte
+	register   chan *Client
+	unregister chan *Client
+	mu         sync.Mutex
+}
+
 func (h *Hub) Run() {
 	for {
 		select {
 		case client := <- h.register:
 			h.mu.Lock()//grab and lock
-			h.clients[client] = true//wait
+			h.clients[client.userId] = client//wait
 			h.mu.Unlock()//unlock
 		case client := <-h.unregister:
 			h.mu.Lock()
-			if _, ok := h.clients[client]; ok {//check if there is clients inside Hub
-				delete(h.clients, client)//delete
+			if _, ok := h.clients[client.userId]; ok {//check if there is clients inside Hub
+				delete(h.clients, client.userId)//delete
 				close(client.send)//close
 			}
 			h.mu.Unlock()
 		case message := <-h.broadcast:
 			h.mu.Lock()
-			for client := range h.clients {
+			for userId, client := range h.clients {
 				select {
 				case client.send <- message:
 				default:
 					close(client.send)
-					delete(h.clients, client)
+					delete(h.clients, userId)
 				}
 			}
 			h.mu.Unlock()
@@ -991,4 +1030,41 @@ func (a *App) parseToken(tokenString string) (int, error) {
         return 0, fmt.Errorf("invalid user ID in token")
     }
     return int(userIDFloat), nil
+}
+
+func (a *App) handleGetNotifications(w http.ResponseWriter, r *http.Request){
+    userID, ok := r.Context().Value(userIDKey).(int)
+    if !ok {
+        http.Error(w, "Unauthorized", http.StatusUnauthorized)
+        return
+    }
+
+    rows, err := a.DB.Query(`SELECT id, comment_id, create_at, is_read FROM notif WHERE user_id = $1 ORDER BY create_at DESC LIMIT 20`, userID)
+    if err != nil {
+        http.Error(w, "Failed to fetch notifications", http.StatusInternalServerError)
+        return
+    }
+    defer rows.Close()
+
+    notifications := []map[string]interface{}{}
+    for rows.Next() {
+        var id int
+        var commentID int
+        var createdAt time.Time
+        var isRead bool
+        if err := rows.Scan(&id, &commentID, &createdAt, &isRead); err != nil{
+            continue
+        }
+        notifications = append(notifications, map[string]interface{}{
+            "id": id,
+            "comment_id": commentID,
+            "created_at": createdAt.Format("2006-01-02 15:04:05"),
+            "read": isRead,
+        })
+    }
+
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(map[string]interface{}{
+        "notifications": notifications,
+    })
 }
