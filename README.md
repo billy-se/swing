@@ -1,6 +1,18 @@
-Swing - A synchronized discussion platform built in Go, using mux for routing and WebSockets for handling concurrent user connections with real-time comment thread updates
+Swing - A real-time discussion platform built in Go and Next.js, using mux and WebSockets to handle concurrent connections and live comment thread updates smoothly.
 
-Why I Build It? to explore, solve and properly scailing bottlenecks real-time collaboration platform. Proving that Go can handle heavy concurrent users
+Why? Most mainstream discussion tools are frustratingly slow and bloated for technical debates. This project was built to dive deep into real-time concurrency, understand how to scale bottlenecks properly, and put Go's performance to the test under heavy loads.
+
+How to Run?
+
+Make sure you have Go, Node.js, and Postgres installed then..
+- Backend
+go run .
+
+- Frontend
+npm install then 
+npm run dev
+
+---
 
 <table>
   <thead>
