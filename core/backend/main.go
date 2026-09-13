@@ -126,6 +126,8 @@ func main() {
 	mux.HandleFunc("GET /api/user/profile", app.authMiddleware(app.handleGetProfile))
 
 	mux.HandleFunc("GET /api/notifications", app.authMiddleware(app.handleGetNotifications))
+	mux.HandleFunc("PATCH /api/notifications/{id}/read", app.authMiddleware(app.handleMarkNotificationRead))
+
 
 	//mux.HandleFunc("POST /api/arguments", app.handleCreateArgument)
 	//mux.HandleFunc("POST /api/jwt", app.handleJWT)

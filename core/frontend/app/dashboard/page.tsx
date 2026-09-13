@@ -26,6 +26,8 @@ export default function Home() {
     argumentsListRef.current = argumentsList;
 
     const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+    const [isNotificationOpen, setIsNotificationOpen] = useState(false);
+    const notificationRef = useRef<HTMLDivElement>(null);
 
     const mapComments = (commentsList: any[]): Comment[] => {
         if (!commentsList) return [];
@@ -41,6 +43,61 @@ export default function Home() {
             replies: mapComments(comment.replies || comment.comments || [])
         })).reverse();
     };
+
+    const loadArguments = async () => {
+            try {
+                const token = localStorage.getItem('user_token_swing');
+                const headers: HeadersInit = {};
+                if (token && token !== 'null' && token !== 'undefined') {
+                    headers['Authorization'] = `Bearer ${token}`;
+                }
+
+                const res = await fetch(`http://localhost:${PORT}/api/arguments`, { headers });
+                if (!res.ok) throw new Error('Failed to fetch arguments');
+
+                const data = await res.json();
+                const initializedData = data.map((arg: Argument) => ({
+                    ...arg,
+                    comments: mapComments(arg.comments || [])
+                }));
+
+                setArgumentsList(initializedData);
+            } catch (err) {
+                console.error("Failed to fetch arguments:", err);
+            }
+        };
+
+    const loadNotifications = async () => {
+            const token = localStorage.getItem('user_token_swing');
+                if(!token || token === 'null' || token === 'undefined') return;
+
+                try {
+                    const res = await fetch(`http://localhost:${PORT}/api/notifications`, {
+                        headers: { 'Authorization': `Bearer ${token}`}
+                    });
+                    if (res.ok){
+                            const notifData = await res.json();
+                            setNotifications(notifData.notifications || []);
+                    }
+                }catch(err){
+                    console.error("Failed to fetch initial notifications", err);
+                }
+            };
+        const markNotificationAsRead = async (notificationId: number) => {
+            try{
+                const token = localStorage.getItem('user_token_swing');
+                await fetch(`http://localhost:${PORT}/api/notifications/${notificationId}/read`, {
+                    method: 'PATCH',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+
+                setNotifications(prev =>
+                    prev.map(notif => notif.id === notificationId ? { ...notif, read: true }: notif)
+                );
+            }catch (err) {
+                console.error("Failed to mark notification as read", err);
+            }
+        };
 
     useEffect(() => {
         const token = localStorage.getItem('user_token_swing');
@@ -171,50 +228,19 @@ export default function Home() {
             }
         };
 
-        const loadArguments = async () => {
-            try {
-                const token = localStorage.getItem('user_token_swing');
-                const headers: HeadersInit = {};
-                if (token && token !== 'null' && token !== 'undefined') {
-                    headers['Authorization'] = `Bearer ${token}`;
-                }
-
-                const res = await fetch(`http://localhost:${PORT}/api/arguments`, { headers });
-                if (!res.ok) throw new Error('Failed to fetch arguments');
-
-                const data = await res.json();
-                const initializedData = data.map((arg: Argument) => ({
-                    ...arg,
-                    comments: mapComments(arg.comments || [])
-                }));
-
-                setArgumentsList(initializedData);
-            } catch (err) {
-                console.error("Failed to fetch arguments:", err);
-            }
-        };
-
-        const loadNotifications = async () => {
-                    const token = localStorage.getItem('user_token_swing');
-                    if(!token || token === 'null' || token === 'undefined') return;
-
-                    try {
-                        const res = await fetch(`http://localhost:${PORT}/api/notifications`, {
-                            headers: { 'Authorization': `Bearer ${token}`}
-                        });
-                        if (res.ok){
-                            const notifData = await res.json();
-                            setNotifications(notifData.notifications || []);
-                        }
-                    }catch(err){
-                        console.error("Failed to fetch initial notifications", err);
-                    }
-                };
-
         loadArguments();
         loadNotifications();
 
+        const handleClickOutside = (e: MouseEvent) => {
+            if(notificationRef.current && !notificationRef.current.contains(e.target as Node)){
+                setIsNotificationOpen(false);
+            }
+        };
+
+        document.addEventListener('mousedown', handleClickOutside);
+
         return () => {
+            document.removeEventListener('mousedown', handleClickOutside);
             if (ws.current) {
                 ws.current.close(1000, 'User session ended');
             }
@@ -327,16 +353,51 @@ export default function Home() {
                     </div>
                     
                     <div className="flex items-center gap-6 text-xs border-t sm:border-t-0 border-zinc-800 pt-3 sm:pt-0 w-full sm:w-auto justify-between sm:justify-end">
-                        <div>
-                            <span className="text-zinc-500 block text-[10px]">NOTIFICATION</span>
-                            <span className={`font-bold ${notifications.length > 0 ? 'text-emerald-400' : 'text-red-500'}`}> {notifications.length || 0} 🐌</span>
+
+                    <div 
+                        ref={notificationRef}
+                        onClick={() => setIsNotificationOpen(!isNotificationOpen)}
+                        className="cursor-pointer hover:opacity-80 transition-opacity select-none relative"
+                    >
+                        <span className="text-zinc-500 block text-[10px]">NOTIFICATION</span>
+                        <span className={`font-bold ${notifications.length > 0 ? 'text-emerald-400' : 'text-red-500'}`}>
+                            {notifications.length || 0} 🐌
+                        </span>
+
+                        {isNotificationOpen && (
+                        <div className="absolute right-0 mt-2 w-64 bg-zinc-900 border border-zinc-800 rounded shadow-lg p-2 z-50 max-h-64 overflow-y-auto">
+                            {notifications.length > 0 ? (
+                                notifications.map((notif) => (
+                                <div 
+                                    key={notif.id} 
+                                    onClick={async () => {
+                                        if (!notif.read && notif.id !== undefined && notif.id !== null) {
+                                            await markNotificationAsRead(Number(notif.id));
+                                        }
+                                        if (notif.argument_id !== undefined && notif.argument_id !== null) {
+                                            setSelectedArgumentId(Number(notif.argument_id));
+                                            setIsReviewOpen(true);
+                                            setIsNotificationOpen(false);
+                                        }
+                                    }}
+                                    className={`text-[11px] py-2 px-2 border-b border-zinc-800 last:border-0 cursor-pointer transition-colors ${notif.read ? 'text-zinc-400 bg-transparent' : 'text-zinc-100 bg-zinc-800/50 font-semibold'}`}
+                                >
+                                    <p>{notif.content}</p>
+                                    <span className="text-[9px] text-zinc-500 block mt-0.5">{notif.created_at || "Just now"}</span>
+                                </div>
+                            ))
+                            ) : (
+                                <div className="text-zinc-500 text-[11px] py-1 text-center">No new notifications</div>
+                            )}
                         </div>
-                        
-                        <div>
-                            <span className="text-zinc-500 block text-[10px]">LOGIC SCORE</span>
-                            <span className="text-emerald-400 font-bold">{logicScore}</span>
-                        </div>
+                    )}
                     </div>
+                    
+                    <div>
+                        <span className="text-zinc-500 block text-[10px]">LOGIC SCORE</span>
+                        <span className="text-emerald-400 font-bold">{logicScore}</span>
+                    </div>
+                </div>
                 </header>
 
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

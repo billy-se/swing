@@ -421,7 +421,7 @@ func (a *App) handleGetNotifications(w http.ResponseWriter, r *http.Request){
         return
     }
 
-    rows, err := a.DB.Query(`SELECT id, comment_id, create_at, is_read FROM notif WHERE user_id = $1 ORDER BY create_at DESC LIMIT 20`, userID)
+    rows, err := a.DB.Query(`SELECT id, argument_id, comment_id, type, content, created_at, is_read FROM notif WHERE user_id = $1 ORDER BY created_at DESC LIMIT 20`, userID)
     if err != nil {
         http.Error(w, "Failed to fetch notifications", http.StatusInternalServerError)
         return
@@ -431,22 +431,58 @@ func (a *App) handleGetNotifications(w http.ResponseWriter, r *http.Request){
     notifications := []map[string]interface{}{}
     for rows.Next() {
         var id int
-        var commentID int
+		var argID sql.NullInt64
+        var commentID sql.NullInt64
+		var notifType string
+		var content string
         var createdAt time.Time
         var isRead bool
-        if err := rows.Scan(&id, &commentID, &createdAt, &isRead); err != nil{
+        if err := rows.Scan(&id, &argID, &commentID, &notifType, &content, &createdAt, &isRead); err != nil{
             continue
         }
-        notifications = append(notifications, map[string]interface{}{
-            "id": id,
-            "comment_id": commentID,
-            "created_at": createdAt.Format("2006-01-02 15:04:05"),
-            "read": isRead,
-        })
+        notifMap := map[string]interface{}{
+			"id": id,
+			"type": notifType,
+			"content": content,
+			"created_at": createdAt.Format("2006-01-02 15:04:05"),
+			"is_read": isRead,
+		}
+
+		if argID.Valid {
+			notifMap["argument_id"] = argID.Int64
+		}
+		if commentID.Valid {
+			notifMap["comment_id"] = commentID.Int64
+		}
+
+		notifications = append(notifications, notifMap)
     }
 
     w.Header().Set("Content-Type", "application/json")
     json.NewEncoder(w).Encode(map[string]interface{}{
         "notifications": notifications,
     })
+}
+
+func (a *App) handleMarkNotificationRead(w http.ResponseWriter, r *http.Request) {
+    userID, ok := r.Context().Value(userIDKey).(int)
+    if !ok {
+        http.Error(w, "Unauthorized", http.StatusUnauthorized)
+        return
+    }
+
+    notifID := r.PathValue("id")
+    if notifID == "" {
+        http.Error(w, "Invalid notification ID", http.StatusBadRequest)
+        return
+    }
+
+    _, err := a.DB.Exec(`UPDATE notif SET is_read = TRUE WHERE id = $1 AND user_id = $2`, notifID, userID)
+    if err != nil {
+        http.Error(w, "Failed to update notification", http.StatusInternalServerError)
+        return
+    }
+
+    w.WriteHeader(http.StatusOK)
+    json.NewEncoder(w).Encode(map[string]string{"message": "Marked as read"})
 }

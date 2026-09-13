@@ -200,15 +200,24 @@ func (a *App) handleCreateComment(w http.ResponseWriter, r *http.Request) {
 	}
 
     var ownerID int
-    err = a.DB.QueryRow("SELECT user_id FROM arguments WHERE id = $1", input.ArgumentID).Scan(&ownerID)
+    /*err = a.DB.QueryRow("SELECT user_id FROM arguments WHERE id = $1", input.ArgumentID).Scan(&ownerID)
     if err != nil {
         log.Printf("Failed to find argument owner: %v", err)
+    }*/
+    if input.ParentID != nil && *input.ParentID != 0 {
+        err = a.DB.QueryRow("SELECT user_id FROM comments WHERE id = $1", input.ParentID).Scan(&ownerID)
+    }else{
+        err = a.DB.QueryRow("SELECT user_id FROM arguments WHERE id = $1", input.ArgumentID).Scan(&ownerID)
     }
 
     var notifID int
     var notifCreatedAt time.Time
     if err == nil && ownerID != userID {
-        err = a.DB.QueryRow(`INSERT INTO notif (comment_id, user_id) VALUES ($1, $2) RETURNING id, create_at`, id, ownerID).Scan(&notifID, &notifCreatedAt)
+        notifType := "NEW_COMMENT"
+        notifContent := fmt.Sprintf("%s replied to your post", author)
+
+        err = a.DB.QueryRow(`INSERT INTO notif (argument_id, comment_id, user_id, type, content) VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at`, input.ArgumentID, id, ownerID, notifType, notifContent).Scan(&notifID, &notifCreatedAt)
+        
         if err == nil {
             a.hub.mu.Lock()
             client, ok := a.hub.clients[ownerID]
@@ -219,8 +228,12 @@ func (a *App) handleCreateComment(w http.ResponseWriter, r *http.Request) {
                     "type": "NEW_NOTIFICATION",
                     "payload": map[string]interface{}{
                         "id": notifID,
+                        "argument_id": input.ArgumentID,
                         "comment_id": id,
+                        "type": notifType,
+                        "content": notifContent,
                         "created_at": notifCreatedAt.Format("2006-01-02 15:04:05"),
+                        "is_read": false,
                     },
                 })
                 select {
