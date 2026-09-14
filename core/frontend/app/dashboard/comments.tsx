@@ -4,10 +4,11 @@ import { Comment } from './types';
 interface CommentFuncProps {
     processedComment: Comment;
     argumentId: string | number;
+    targetCommentId?: string | number | null;
     onAddReply: (commentId: string, savedComment: { id: number; content: string; created_at: string; user_id?: number; author?: string }) => void;
 }
 
-export function CommentFunc({ processedComment, argumentId, onAddReply}: CommentFuncProps) {
+export function CommentFunc({ processedComment, argumentId, targetCommentId, onAddReply}: CommentFuncProps) {
     const [isReplying, setIsReplying] = useState(false);
     const [replyText, setReplyText] = useState("");
     const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -20,6 +21,17 @@ export function CommentFunc({ processedComment, argumentId, onAddReply}: Comment
     useEffect(() => {
         setFireCount(processedComment.fire_count || processedComment.score || 0);
     }, [processedComment.fire_count, processedComment.score]);
+
+    useEffect(() => {
+        if (targetCommentId && processedComment.replies) {
+            const hasTargetInReplies = (replies: any[]): boolean => {
+                return replies.some(r => String(r.id) === String(targetCommentId) || (r.replies && hasTargetInReplies(r.replies)));
+            };
+            if (String(processedComment.id) === String(targetCommentId) || hasTargetInReplies(processedComment.replies)) {
+                setIsCollapsed(false);
+            }
+        }
+    }, [targetCommentId, processedComment]);
 
     useEffect(() => {
         const token = localStorage.getItem('user_token_swing');
@@ -79,7 +91,7 @@ export function CommentFunc({ processedComment, argumentId, onAddReply}: Comment
 
     return (
         <div className="flex flex-col gap-2 my-2 text-xs">
-            <div className="bg-zinc-900 border border-zinc-800 p-3 rounded">
+            <div id={`comment-${processedComment.id}`} className="bg-zinc-900 border border-zinc-800 p-3 rounded transition-colors duration-500">
                 <div className="flex justify-between items-center text-[10px] text-zinc-500 mb-1">
                     <span className="font-mono text-emerald-400">[{processedComment.author}]</span>
                     <div className="flex gap-3 items-center">
@@ -179,7 +191,13 @@ export function CommentFunc({ processedComment, argumentId, onAddReply}: Comment
             {!isCollapsed && processedComment.replies && processedComment.replies.length > 0 && (
                 <div className="ml-4 pl-3 border-l-2 border-zinc-800 flex flex-col gap-2">
                     {processedComment.replies.map((check) => (
-                        <CommentFunc key={check.id} processedComment={check} argumentId={argumentId} onAddReply={onAddReply} />
+                        <CommentFunc 
+                            key={check.id} 
+                            processedComment={check} 
+                            argumentId={argumentId} 
+                            targetCommentId={targetCommentId} 
+                            onAddReply={onAddReply} 
+                        />
                     ))}
                 </div>
             )}
@@ -237,7 +255,7 @@ export function PrimaryCommentInput({ argumentId, onAddReply }: PrimaryCommentIn
                     const token = localStorage.getItem('user_token_swing');
 
                     try {
-                        const res =     await fetch('http://localhost:2026/api/comments', {
+                        const res =    await fetch('http://localhost:2026/api/comments', {
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json',

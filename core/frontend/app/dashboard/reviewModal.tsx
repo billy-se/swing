@@ -5,6 +5,7 @@ import { PrimaryCommentInput, CommentFunc } from './comments';
 interface ReviewModalProps {
     isReviewOpen: boolean;
     selectedArgument: Argument | null;
+    targetCommentId?: string | number | null;
     setIsReviewOpen: (value: boolean) => void;
     handleAddReply: (
         targetId: string, 
@@ -18,7 +19,7 @@ interface ReviewModalProps {
     ) => void;
 }
 
-export function ReviewModal({ isReviewOpen, selectedArgument, setIsReviewOpen, handleAddReply }: ReviewModalProps) {
+export function ReviewModal({ isReviewOpen, selectedArgument, targetCommentId, setIsReviewOpen, handleAddReply }: ReviewModalProps) {
     if (!isReviewOpen || !selectedArgument) return null;
 
     return (
@@ -56,6 +57,7 @@ export function ReviewModal({ isReviewOpen, selectedArgument, setIsReviewOpen, h
                                 key={processedComment.id} 
                                 processedComment={processedComment} 
                                 argumentId={selectedArgument.id}
+                                targetCommentId={targetCommentId}
                                 onAddReply={handleAddReply} 
                             />
                         ))

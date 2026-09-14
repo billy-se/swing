@@ -10,6 +10,7 @@ const PORT = process.env.NEXT_PUBLIC_PORT || '2026';
 export default function Home() {
     const [isReviewOpen, setIsReviewOpen] = useState(false);
     const [selectedArgumentId, setSelectedArgumentId] = useState<null | number>(null);
+    const [targetCommentId, setTargetCommentId] = useState<null | number | string>(null);
     const [argumentsList, setArgumentsList] = useState<Argument[]>([]);
     const [isCreateOpen, setIsCreateOpen] = useState(false);
 
@@ -22,8 +23,6 @@ export default function Home() {
     const [logicScore, setLogicScore] = useState(0);
 
     const ws = useRef<WebSocket | null>(null);
-    const argumentsListRef = useRef(argumentsList);
-    argumentsListRef.current = argumentsList;
 
     const [notifications, setNotifications] = useState<NotificationItem[]>([]);
     const [isNotificationOpen, setIsNotificationOpen] = useState(false);
@@ -45,59 +44,60 @@ export default function Home() {
     };
 
     const loadArguments = async () => {
-            try {
-                const token = localStorage.getItem('user_token_swing');
-                const headers: HeadersInit = {};
-                if (token && token !== 'null' && token !== 'undefined') {
-                    headers['Authorization'] = `Bearer ${token}`;
-                }
-
-                const res = await fetch(`http://localhost:${PORT}/api/arguments`, { headers });
-                if (!res.ok) throw new Error('Failed to fetch arguments');
-
-                const data = await res.json();
-                const initializedData = data.map((arg: Argument) => ({
-                    ...arg,
-                    comments: mapComments(arg.comments || [])
-                }));
-
-                setArgumentsList(initializedData);
-            } catch (err) {
-                console.error("Failed to fetch arguments:", err);
+        try {
+            const token = localStorage.getItem('user_token_swing');
+            const headers: HeadersInit = {};
+            if (token && token !== 'null' && token !== 'undefined') {
+                headers['Authorization'] = `Bearer ${token}`;
             }
-        };
+
+            const res = await fetch(`http://localhost:${PORT}/api/arguments`, { headers });
+            if (!res.ok) throw new Error('Failed to fetch arguments');
+
+            const data = await res.json();
+            const initializedData = data.map((arg: Argument) => ({
+                ...arg,
+                comments: mapComments(arg.comments || [])
+            }));
+
+            setArgumentsList(initializedData);
+        } catch (err) {
+            console.error("Failed to fetch arguments:", err);
+        }
+    };
 
     const loadNotifications = async () => {
-            const token = localStorage.getItem('user_token_swing');
-                if(!token || token === 'null' || token === 'undefined') return;
+        const token = localStorage.getItem('user_token_swing');
+        if (!token || token === 'null' || token === 'undefined') return;
 
-                try {
-                    const res = await fetch(`http://localhost:${PORT}/api/notifications`, {
-                        headers: { 'Authorization': `Bearer ${token}`}
-                    });
-                    if (res.ok){
-                            const notifData = await res.json();
-                            setNotifications(notifData.notifications || []);
-                    }
-                }catch(err){
-                    console.error("Failed to fetch initial notifications", err);
-                }
-            };
-        const markNotificationAsRead = async (notificationId: number) => {
-            try{
-                const token = localStorage.getItem('user_token_swing');
-                await fetch(`http://localhost:${PORT}/api/notifications/${notificationId}/read`, {
-                    method: 'PATCH',
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-
-                setNotifications(prev =>
-                    prev.map(notif => notif.id === notificationId ? { ...notif, read: true }: notif)
-                );
-            }catch (err) {
-                console.error("Failed to mark notification as read", err);
+        try {
+            const res = await fetch(`http://localhost:${PORT}/api/notifications`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (res.ok) {
+                const notifData = await res.json();
+                setNotifications(notifData.notifications || []);
             }
-        };
+        } catch (err) {
+            console.error("Failed to fetch initial notifications", err);
+        }
+    };
+
+    const markNotificationAsRead = async (notificationId: number) => {
+        try {
+            const token = localStorage.getItem('user_token_swing');
+            await fetch(`http://localhost:${PORT}/api/notifications/${notificationId}/read`, {
+                method: 'PATCH',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+
+            setNotifications(prev =>
+                prev.map(notif => notif.id === notificationId ? { ...notif, is_read: true } : notif)
+            );
+        } catch (err) {
+            console.error("Failed to mark notification as read", err);
+        }
+    };
 
     useEffect(() => {
         const token = localStorage.getItem('user_token_swing');
@@ -123,9 +123,10 @@ export default function Home() {
             ? `ws://localhost:${PORT}/ws?token=${token}`
             : `ws://localhost:${PORT}/ws`;
 
-        ws.current = new WebSocket(wsUrl);
+        const socket = new WebSocket(wsUrl);
+        ws.current = socket;
 
-        ws.current.onmessage = (event) => {
+        socket.onmessage = (event) => {
             const data = JSON.parse(event.data);
 
             if (data.type === "NEW_ARGUMENT") {
@@ -136,9 +137,8 @@ export default function Home() {
                 };
 
                 setArgumentsList(prev => {
-                    const currentList = argumentsListRef.current;
-                    if (currentList.some(arg => arg.id === newArg.id)) return currentList;
-                    return [newArg, ...currentList];
+                    if (prev.some(arg => arg.id === newArg.id)) return prev;
+                    return [newArg, ...prev];
                 });
             } else if (data.type === "NEW_COMMENT") {
                 const newComment: Comment = {
@@ -169,8 +169,8 @@ export default function Home() {
                     });
                 };
 
-                setArgumentsList(() => {
-                    return argumentsListRef.current.map(arg => {
+                setArgumentsList(prevList => {
+                    return prevList.map(arg => {
                         if (String(arg.id) === argumentId) {
                             const currentComments = arg.comments || [];
                             if (parentId == null || parentId === undefined || parentId === "root-id") {
@@ -184,14 +184,14 @@ export default function Home() {
                 });
             } else if (data.type === "SWING_SCORE_UPDATE") {
                 const payload = data.payload || data;
-                const targetCommentId = String(payload.comment_id || payload.commentId || payload.id);
+                const targetCommentIdStr = String(payload.comment_id || payload.commentId || payload.id);
                 const actionUserId = payload.user_id;
 
                 const currentUserId = (() => {
                     try {
-                        const token = localStorage.getItem('user_token_swing');
-                        if (!token) return null;
-                        const jwtPayload = JSON.parse(atob(token.split('.')[1]));
+                        const jwtToken = localStorage.getItem('user_token_swing');
+                        if (!jwtToken) return null;
+                        const jwtPayload = JSON.parse(atob(jwtToken.split('.')[1]));
                         return jwtPayload.user_id || jwtPayload.id;
                     } catch {
                         return null;
@@ -200,9 +200,8 @@ export default function Home() {
 
                 const updateFireRecursive = (list: Comment[]): Comment[] => {
                     return list.map(comment => {
-                        if (comment.id === targetCommentId) {
+                        if (comment.id === targetCommentIdStr) {
                             const isCurrentUsersAction = actionUserId && Number(actionUserId) === Number(currentUserId);
-                            
                             return { 
                                 ...comment, 
                                 fire_count: payload.fire_count !== undefined ? payload.fire_count : comment.fire_count,
@@ -216,15 +215,15 @@ export default function Home() {
                     });
                 };
 
-                setArgumentsList(() => {
-                    return argumentsListRef.current.map(arg => {
+                setArgumentsList(prevList => {
+                    return prevList.map(arg => {
                         const updatedComments = updateFireRecursive(arg.comments || []);
                         return { ...arg, comments: updatedComments };
                     });
                 });
-            } else if (data.type == "NEW_NOTIFICATION"){
+            } else if (data.type === "NEW_NOTIFICATION") {
                 const newNotif = data.payload || data;
-                setNotifications((prev) => [newNotif, ...prev]);
+                setNotifications(prev => [newNotif, ...prev]);
             }
         };
 
@@ -232,7 +231,7 @@ export default function Home() {
         loadNotifications();
 
         const handleClickOutside = (e: MouseEvent) => {
-            if(notificationRef.current && !notificationRef.current.contains(e.target as Node)){
+            if (notificationRef.current && !notificationRef.current.contains(e.target as Node)) {
                 setIsNotificationOpen(false);
             }
         };
@@ -241,8 +240,8 @@ export default function Home() {
 
         return () => {
             document.removeEventListener('mousedown', handleClickOutside);
-            if (ws.current) {
-                ws.current.close(1000, 'User session ended');
+            if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+                socket.close(1000, 'User session ended');
             }
         };
     }, []);
@@ -342,7 +341,6 @@ export default function Home() {
             <div className="w-full max-w-6xl flex flex-col gap-6">
                 
                 <header className="bg-zinc-950 border border-zinc-800 rounded-lg p-4 md:p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                    
                     <div className="flex items-center gap-3">
                         <div>
                             <h1 className="text-sm font-semibold tracking-widest uppercase text-zinc-200">
@@ -353,51 +351,63 @@ export default function Home() {
                     </div>
                     
                     <div className="flex items-center gap-6 text-xs border-t sm:border-t-0 border-zinc-800 pt-3 sm:pt-0 w-full sm:w-auto justify-between sm:justify-end">
+                        <div 
+                            ref={notificationRef}
+                            onClick={() => setIsNotificationOpen(!isNotificationOpen)}
+                            className="cursor-pointer hover:opacity-80 transition-opacity select-none relative"
+                        >
+                            <span className="text-zinc-500 block text-[10px]">NOTIFICATION</span>
+                            <span className={`font-bold ${notifications.length > 0 ? 'text-emerald-400' : 'text-red-500'}`}>
+                                {notifications.length || 0} 🐌
+                            </span>
 
-                    <div 
-                        ref={notificationRef}
-                        onClick={() => setIsNotificationOpen(!isNotificationOpen)}
-                        className="cursor-pointer hover:opacity-80 transition-opacity select-none relative"
-                    >
-                        <span className="text-zinc-500 block text-[10px]">NOTIFICATION</span>
-                        <span className={`font-bold ${notifications.length > 0 ? 'text-emerald-400' : 'text-red-500'}`}>
-                            {notifications.length || 0} 🐌
-                        </span>
+                            {isNotificationOpen && (
+                            <div className="absolute right-0 mt-2 w-64 bg-zinc-900 border border-zinc-800 rounded shadow-lg p-2 z-50 max-h-64 overflow-y-auto">
+                                {notifications.length > 0 ? (
+                                    notifications.map((notif) => (
+                                    <div 
+                                        key={notif.id} 
+                                        onClick={async () => {
+                                            if (!notif.read && notif.id !== undefined && notif.id !== null) {
+                                                await markNotificationAsRead(Number(notif.id));
+                                            }
+                                            if (notif.argument_id !== undefined && notif.argument_id !== null) {
+                                                setSelectedArgumentId(Number(notif.argument_id));
+                                                setTargetCommentId(notif.comment_id || null);
+                                                setIsReviewOpen(true);
+                                                setIsNotificationOpen(false);
 
-                        {isNotificationOpen && (
-                        <div className="absolute right-0 mt-2 w-64 bg-zinc-900 border border-zinc-800 rounded shadow-lg p-2 z-50 max-h-64 overflow-y-auto">
-                            {notifications.length > 0 ? (
-                                notifications.map((notif) => (
-                                <div 
-                                    key={notif.id} 
-                                    onClick={async () => {
-                                        if (!notif.read && notif.id !== undefined && notif.id !== null) {
-                                            await markNotificationAsRead(Number(notif.id));
-                                        }
-                                        if (notif.argument_id !== undefined && notif.argument_id !== null) {
-                                            setSelectedArgumentId(Number(notif.argument_id));
-                                            setIsReviewOpen(true);
-                                            setIsNotificationOpen(false);
-                                        }
-                                    }}
-                                    className={`text-[11px] py-2 px-2 border-b border-zinc-800 last:border-0 cursor-pointer transition-colors ${notif.read ? 'text-zinc-400 bg-transparent' : 'text-zinc-100 bg-zinc-800/50 font-semibold'}`}
-                                >
-                                    <p>{notif.content}</p>
-                                    <span className="text-[9px] text-zinc-500 block mt-0.5">{notif.created_at || "Just now"}</span>
-                                </div>
-                            ))
-                            ) : (
-                                <div className="text-zinc-500 text-[11px] py-1 text-center">No new notifications</div>
+                                                if (notif.comment_id) {
+                                                    setTimeout(() => {
+                                                        const commentEl = document.getElementById(`comment-${notif.comment_id}`);
+                                                        if (commentEl) {
+                                                            commentEl.classList.add('bg-emerald-900/40', 'transition-colors', 'duration-500');
+                                                            setTimeout(() => {
+                                                                commentEl.classList.remove('bg-emerald-900/40');
+                                                            }, 1500);
+                                                        }
+                                                    }, 100);
+                                                }
+                                            }
+                                        }}
+                                        className={`text-[11px] py-2 px-2 border-b border-zinc-800 last:border-0 cursor-pointer transition-colors ${notif.is_read ? 'text-zinc-400 bg-transparent' : 'text-zinc-100 bg-zinc-800/50 font-semibold'}`}
+                                    >
+                                        <p>{notif.content}</p>
+                                        <span className="text-[9px] text-zinc-500 block mt-0.5">{notif.created_at || "Just now"}</span>
+                                    </div>
+                                    ))
+                                ) : (
+                                    <div className="text-zinc-500 text-[11px] py-1 text-center">No new notifications</div>
+                                )}
+                            </div>
                             )}
                         </div>
-                    )}
+                        
+                        <div>
+                            <span className="text-zinc-500 block text-[10px]">LOGIC SCORE</span>
+                            <span className="text-emerald-400 font-bold">{logicScore}</span>
+                        </div>
                     </div>
-                    
-                    <div>
-                        <span className="text-zinc-500 block text-[10px]">LOGIC SCORE</span>
-                        <span className="text-emerald-400 font-bold">{logicScore}</span>
-                    </div>
-                </div>
                 </header>
 
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -405,15 +415,9 @@ export default function Home() {
                         <div className="flex justify-between items-center bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-xs text-zinc-400">
                             <span className="text-zinc-200 font-bold tracking-wider px-1">ACTIVE DEBATES</span>
                             <div className="flex gap-10 bg-zinc-900/60 p-1 rounded-lg border border-zinc-800">
-                                <div className="relative group">
-                                    <button className="text-emerald-400 hover:underline">Recent</button>
-                                </div>
-                                <div className="relative group">
-                                     <button className="hover:text-zinc-200">Top</button>
-                                </div>
-                                <div className="relative group">
-                                    <button className="text-zinc-400 hover:text-zinc-200">WatchList</button>
-                                </div>
+                                <button className="text-emerald-400 hover:underline">Recent</button>
+                                <button className="hover:text-zinc-200">Top</button>
+                                <button className="text-zinc-400 hover:text-zinc-200">WatchList</button>
                             </div>
                         </div>
 
@@ -434,6 +438,7 @@ export default function Home() {
                                     <button className="bg-zinc-900 hover:bg-zinc-800 text-zinc-200 px-3 py-1 rounded border border-zinc-800 text-xs transition-colors" 
                                     onClick={() => {
                                         setSelectedArgumentId(check.id);
+                                        setTargetCommentId(null);
                                         setIsReviewOpen(true);
                                     }}>
                                         Review Argument
@@ -484,6 +489,7 @@ export default function Home() {
                 <ReviewModal 
                     isReviewOpen={isReviewOpen}
                     selectedArgument={selectedArgument}
+                    targetCommentId={targetCommentId}
                     setIsReviewOpen={setIsReviewOpen}
                     handleAddReply={handleAddReply}
                 />

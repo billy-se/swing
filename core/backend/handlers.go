@@ -431,31 +431,33 @@ func (a *App) handleGetNotifications(w http.ResponseWriter, r *http.Request){
     notifications := []map[string]interface{}{}
     for rows.Next() {
         var id int
-		var argID sql.NullInt64
+        var argID sql.NullInt64
         var commentID sql.NullInt64
-		var notifType string
-		var content string
+        var notifType sql.NullString
+        var content sql.NullString
         var createdAt time.Time
         var isRead bool
-        if err := rows.Scan(&id, &argID, &commentID, &notifType, &content, &createdAt, &isRead); err != nil{
+
+        if err := rows.Scan(&id, &argID, &commentID, &notifType, &content, &createdAt, &isRead); err != nil {
             continue
         }
+
         notifMap := map[string]interface{}{
-			"id": id,
-			"type": notifType,
-			"content": content,
-			"created_at": createdAt.Format("2006-01-02 15:04:05"),
-			"is_read": isRead,
-		}
+            "id":         id,
+            "type":       notifType.String,
+            "content":    content.String,
+            "created_at": createdAt.Format("2006-01-02 15:04:05"),
+            "is_read":    isRead,
+        }
 
-		if argID.Valid {
-			notifMap["argument_id"] = argID.Int64
-		}
-		if commentID.Valid {
-			notifMap["comment_id"] = commentID.Int64
-		}
+        if argID.Valid {
+            notifMap["argument_id"] = argID.Int64
+        }
+        if commentID.Valid {
+            notifMap["comment_id"] = commentID.Int64
+        }
 
-		notifications = append(notifications, notifMap)
+        notifications = append(notifications, notifMap)
     }
 
     w.Header().Set("Content-Type", "application/json")
