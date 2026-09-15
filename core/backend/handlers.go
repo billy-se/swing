@@ -97,7 +97,6 @@ func cleanJSONResponse(input string) string {
 }
 
 func (a *App) handleGetProfile(w http.ResponseWriter, r *http.Request) {
-    // 1. Get the user ID from the request context (assuming your auth middleware sets it)
     userId := r.Context().Value(userIDKey) 
     if userId == nil {
         http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -114,7 +113,6 @@ func (a *App) handleGetProfile(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    // 3. Send the data back as JSON
     w.Header().Set("Content-Type", "application/json")
     json.NewEncoder(w).Encode(map[string]any{
         "username":    username,
@@ -225,10 +223,8 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	var username string
 	var user User
-	//WHERE email = 1$ (earlier)
 	query := "SELECT id, email, password_hash, username FROM users WHERE email_hash = $1"
-
-
+	
 	//creds.Email
 	err = a.DB.QueryRow(query, decryptEmail).Scan(&user.Id, &user.Email, &user.HashedPassword, &username)
 
