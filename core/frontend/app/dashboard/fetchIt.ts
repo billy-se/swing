@@ -1,20 +1,30 @@
+import { getValidToken } from './auth';
+
 export const fetchIt = async (endpoint: string, options: RequestInit = {}) => {
-        const token = localStorage.getItem('user_token_swing');
+    const fullUrl = `${process.env.NEXT_PUBLIC_API_URL}${endpoint}`;
+    console.log("Fetching URL:", fullUrl);
 
-        const headers: Record<string, string> = {
-            ...options.headers as Record<string, string>
-        };
+    const token = getValidToken();
 
-        if (token && token !== 'null' && token !== 'undefined') {
-            headers['Authorization'] = `Bearer ${token}`;
-        }
+    const headers: Record<string, string> = {
+        ...(options.body ? { 'Content-Type': 'application/json' } : {} ),
+        ...(options.headers as Record<string, string>),
+    };
 
-        const fullUrl = `${process.env.NEXT_PUBLIC_API_URL}${endpoint}`;
-        console.log("Fetching URL:", fullUrl);
+    if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+    }
 
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${endpoint}`, {
-            ...options, headers,
+    try {
+        const response = await fetch(fullUrl, {
+            ...options,
+            credentials: 'include', 
+            headers,
         });
 
         return response;
+    } catch (error) {
+        console.error("FetchIt network error:", error);
+        throw error;
     }
+};

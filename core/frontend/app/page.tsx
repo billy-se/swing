@@ -1,9 +1,9 @@
-// app/auth/page.tsx
 'use client'
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation';
-import { fetchIt }  from './dashboard/fetchIt';
+import { fetchIt }  from '@/app/dashboard/fetchIt';
+import { setMemoryAccessToken, api } from '@/app/dashboard/api';
 
 //outside random words
 const words = ["PAPER", "DOOR", "THIN", "GRASS", "GRAY", "MINE", "CHALK", "CAT", "DOG", "RUN", "FAST", "BIG", "RED", "SUN", "HAT", "CUP", "PEN", "BOX", "CAR", "SKY", "SIT", "MAP", "NET", "BED", "TOY", "PIG", "PAN"];
@@ -120,7 +120,7 @@ export default function AuthPage() {
     }
 
     try {
-      const response = await fetchIt(`/api/login`, {
+      /*const response = await fetchIt(`/api/login`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({email,password})
@@ -136,9 +136,17 @@ export default function AuthPage() {
 
       localStorage.setItem('user_token_swing', responseData.token);
       localStorage.setItem('username_swing', responseData.username);
+      */
+
+      const response = await api.post('/api/login', {
+        email,
+        password,
+      });
 
       setLoginMessage('Login Successful');
       
+      setMemoryAccessToken(response.data.access_token);
+
       router.push('/dashboard');
     }catch(error: unknown){
       if (error instanceof Error){

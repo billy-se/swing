@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Comment } from './types';
 import { fetchIt } from './fetchIt';
+import { getValidToken } from './auth';
 
 interface CommentFuncProps {
     processedComment: Comment;
@@ -27,6 +28,18 @@ export function CommentFunc({ processedComment, argumentId, targetCommentId, onA
     
     const [fireCount, setFireCount] = useState(processedComment.fire_count || processedComment.score || 0); 
 
+    const [isHighlighted, setIsHighlighted] = useState(false);
+
+    useEffect(() => {
+        if (targetCommentId && String(processedComment.id) === String(targetCommentId)) {
+            setIsHighlighted(true);
+            const timer = setTimeout(() => {
+                setIsHighlighted(false);
+            }, 1000);
+            return () => clearTimeout(timer);
+        }
+    }, [targetCommentId, processedComment.id]);
+
     useEffect(() => {
         setFireCount(processedComment.fire_count || processedComment.score || 0);
     }, [processedComment.fire_count, processedComment.score]);
@@ -49,7 +62,7 @@ export function CommentFunc({ processedComment, argumentId, targetCommentId, onA
     }, [targetCommentId, processedComment]);
 
     useEffect(() => {
-        const token = localStorage.getItem('user_token_swing');
+        const token = getValidToken();
 
         if (token && token !== 'null' && token !== 'undefined') {
             setIsLoggedIn(true);
@@ -97,7 +110,14 @@ export function CommentFunc({ processedComment, argumentId, targetCommentId, onA
 
     return (
         <div className="flex flex-col gap-2 my-2 text-xs">
-            <div id={`comment-${processedComment.id}`} className="bg-zinc-900 border border-zinc-800 p-3 rounded transition-colors duration-500">
+            <div
+                id={`comment-${processedComment.id}`}
+                className={`border p-3 rounded transition-colors duration-500 ${
+                    isHighlighted 
+                        ? 'bg-emerald-900/60 border-emerald-500' 
+                        : 'bg-zinc-900 border-zinc-800'
+                }`}
+                >
                 <div className="flex justify-between items-center text-[10px] text-zinc-500 mb-1">
                     <span className="font-mono text-emerald-400">[{processedComment.author}]</span>
                     <div className="flex gap-3 items-center">
@@ -171,16 +191,6 @@ export function CommentFunc({ processedComment, argumentId, targetCommentId, onA
                                         throw new Error("Failed to save comment");
                                     }
 
-                                    const responseData = await response.json();
-
-                                    onAddReply(String(processedComment.id), {
-                                        id: responseData.id,
-                                        content: replyText,
-                                        created_at: responseData.created_at,
-                                        user_id: currentUserId ?? undefined,
-                                        author: currentUsername || responseData.author
-                                    });
-
                                     setReplyText("");
                                     setIsReplying(false);
                                 } catch (err) {
@@ -223,7 +233,7 @@ export function PrimaryCommentInput({ argumentId, onAddReply }: PrimaryCommentIn
     const [currentUsername, setCurrentUsername] = useState<string>("");
 
     useEffect(() => {
-        const token = localStorage.getItem('user_token_swing');
+        const token = getValidToken();
 
         if (token && token !== 'null' && token !== 'undefined') {
             setIsLoggedIn(true);
@@ -277,15 +287,6 @@ export function PrimaryCommentInput({ argumentId, onAddReply }: PrimaryCommentIn
                             throw new Error(`Server error (${response.status}): ${errorText}`);      
                         }
                         
-                        const responseData = await response.json();
-
-                        onAddReply("root-id", {
-                            id: responseData.id,
-                            content: primaryText,
-                            created_at: responseData.created_at,
-                            user_id: currentUserId ?? undefined,
-                            author: currentUsername || responseData.author
-                        });
                         setPrimaryText("");
                     } catch (err) {
                         console.error("Error posting root comment:", err);

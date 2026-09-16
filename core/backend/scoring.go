@@ -7,9 +7,9 @@ import (
 )
 
 const (
-	MajorityThresholdRatio  = 0.40
-	CreatorPenaltyRate      = 0.02
-	CompetitorPenaltyRate   = 0.05
+	MajorityThresholdRatio = 0.40
+	CreatorPenaltyRate     = 0.02
+	CompetitorPenaltyRate  = 0.05
 )
 
 func HasReachedMajority(commentFires, totalFires int) bool {
@@ -82,6 +82,10 @@ func (a *App) ApplyConsensusDeflationTx(tx *sql.Tx, commentID int64, argumentID 
 		if compUserID != commentUserID {
 			compUserIDs = append(compUserIDs, compUserID)
 		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("row iteration error: %w", err)
 	}
 	rows.Close()
 

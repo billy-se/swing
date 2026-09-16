@@ -5,6 +5,8 @@ import { Comment, Argument, NotificationItem, RawComment } from './types';
 import { ReviewModal } from './reviewModal';
 import { CreateArgumentModal } from './createModal';
 import { fetchIt } from './fetchIt';
+import { getValidToken } from './auth';
+import { api, setMemoryAccessToken } from '@/app/dashboard/api';
 
 export default function Home() {
     const [isReviewOpen, setIsReviewOpen] = useState(false);
@@ -26,6 +28,8 @@ export default function Home() {
     const [notifications, setNotifications] = useState<NotificationItem[]>([]);
     const [isNotificationOpen, setIsNotificationOpen] = useState(false);
     const notificationRef = useRef<HTMLDivElement>(null);
+
+    const unreadCount = notifications.filter(n => !n.is_read).length;
 
     const mapComments = (commentsList: RawComment[]): Comment[] => {
         if (!Array.isArray(commentsList)) return [];
@@ -91,143 +95,183 @@ export default function Home() {
     };
 
     useEffect(() => {
-        const rawToken = localStorage.getItem('user_token_swing');
-        const token = (rawToken && rawToken !== 'null' && rawToken !== 'undefined') ? rawToken : null;
+        if (ws.current && (ws.current.readyState === WebSocket.OPEN || ws.current.readyState === WebSocket.CONNECTING)) return;
 
-        loadArguments();
-        loadNotifications();
+        let socket: WebSocket | null = null;
+        let isMounted = true;
 
-        if (token) {
-            setIsLoggedIn(true);
+        const initializeConnection = async () => {
+            let token = getValidToken();
 
-            const loadProfile = async () => {
+            if (!token) {
                 try {
-                    const res = await fetchIt('/api/user/profile');
-                    if (!res.ok) throw new Error('failed to fetch profile');
+                    const refreshRes = await api.post('/api/refresh');
+                    token = refreshRes.data.access_token;
+                    setMemoryAccessToken(token);
+                } catch (err) {
+                    console.log("No active session found. Running as guest");
+                }
+            }
 
-                    const data = await res.json();
+            loadArguments();
+            loadNotifications();
+
+            if (token) {
+                setIsLoggedIn(true);
+                try {
+                    const res = await api.get('/api/user/profile');
+                    const data = res.data;
                     if (data.username) setCurrentUsername(data.username);
                     if (data.logic_score !== undefined) setLogicScore(data.logic_score);
                 } catch (err) {
                     console.error("Failed to load profile", err);
                 }
-            };
-            loadProfile();
-        }
+            } else {
+                setIsLoggedIn(false);
+                setCurrentUsername('GUEST');
+            }
 
-        const wsUrl = token
-            ? `${process.env.NEXT_PUBLIC_WS_URL}/ws?token=${token}`
-            : `${process.env.NEXT_PUBLIC_WS_URL}/ws`;
+            try {
+                const wsBaseUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:2026';
+                let wsUrl = `${wsBaseUrl}/ws`;
 
-        const socket = new WebSocket(wsUrl);
-        ws.current = socket;
+                if (token) {
+                    const ticketRes = await api.post('/api/ws-ticket');
+                    const ticket = ticketRes.data.ticket;
+                    wsUrl = `${wsBaseUrl}/ws?ticket=${ticket}`;
+                }
 
-        socket.onmessage = (fromServerJson) => {
-            const messageJson = JSON.parse(fromServerJson.data);
+                if (!isMounted) return;
 
-            if (messageJson.type === "NEW_ARGUMENT") {
-                const rawPayload = messageJson.payload || messageJson;
-                const incomingArgument: Argument = {
-                    ...rawPayload,
-                    comments: mapComments(rawPayload.comments || [])
+                console.log("Attempting to connect to:", wsUrl);
+                socket = new WebSocket(wsUrl);
+                ws.current = socket;
+
+                socket.onopen = () => {
+                    console.log("WebSocket successfully connected via ticket!");
                 };
 
-                setArgumentsList(existingArguments => {
-                    if (existingArguments.some(item => item.id === incomingArgument.id)) return existingArguments;
-                    return [incomingArgument, ...existingArguments];
-                });
-
-            } else if (messageJson.type === "NEW_COMMENT") {
-                const incomingComment: Comment = {
-                    id: String(messageJson.payload.id),
-                    user_id: messageJson.payload.user_id || messageJson.payload.userId || messageJson.payload.author_id,
-                    author: messageJson.payload.author || "ANONYMOUS",
-                    content: messageJson.payload.content,
-                    timestamp: messageJson.payload.timestamp || (messageJson.payload.created_at ? messageJson.payload.created_at.split('.')[0].replace('T', ' ') : "Just now"),
-                    score: messageJson.payload.score || 0,
-                    fire_count: messageJson.payload.fire_count || 0,
-                    replies: []
+                socket.onerror = (error) => {
+                    console.error("WebSocket error occurred:", error);
                 };
 
-                const argumentId = String(messageJson.payload.argument_id || messageJson.payload.arg_id);
-                const parentCommentId = messageJson.payload.parent_id;
-
-                const addReplyRecursive = (existingComments: Comment[]): Comment[] => {
-                    return existingComments.map(commentItem => {
-                        if (commentItem.id === String(parentCommentId)) {
-                            if (commentItem.replies?.some(existingReply => existingReply.id === incomingComment.id)) return commentItem;
-                            return { ...commentItem, replies: [incomingComment, ...(commentItem.replies || [])] };
-                        }
-
-                        if (commentItem.replies && commentItem.replies.length > 0) {
-                            return { ...commentItem, replies: addReplyRecursive(commentItem.replies) };
-                        }
-                        return commentItem;
-                    });
+                socket.onclose = (event) => {
+                    console.log("WebSocket closed:", event.reason);
                 };
 
-                setArgumentsList(existingArguments => {
-                    return existingArguments.map(argumentItem => {
-                        if (String(argumentItem.id) === argumentId) {
-                            const existingComments = argumentItem.comments || [];
+                socket.onmessage = (fromServerJson) => {
+                    const messageJson = JSON.parse(fromServerJson.data);
 
-                            if (parentCommentId == null || parentCommentId === undefined || parentCommentId === "root-id") {
-                                if (existingComments.some(commentItem => commentItem.id === incomingComment.id)) return argumentItem;
-                                return { ...argumentItem, comments: [incomingComment, ...existingComments] };
+                    if (messageJson.type === "NEW_ARGUMENT") {
+                        const rawPayload = messageJson.payload || messageJson;
+                        const incomingArgument: Argument = {
+                            ...rawPayload,
+                            comments: mapComments(rawPayload.comments || [])
+                        };
+
+                        setArgumentsList(existingArguments => {
+                            if (existingArguments.some(item => item.id === incomingArgument.id)) return existingArguments;
+                            return [incomingArgument, ...existingArguments];
+                        });
+
+                    } else if (messageJson.type === "NEW_COMMENT") {
+                        const incomingComment: Comment = {
+                            id: String(messageJson.payload.id),
+                            user_id: messageJson.payload.user_id || messageJson.payload.userId || messageJson.payload.author_id,
+                            author: messageJson.payload.author || "ANONYMOUS",
+                            content: messageJson.payload.content,
+                            timestamp: messageJson.payload.timestamp || (messageJson.payload.created_at ? messageJson.payload.created_at.split('.')[0].replace('T', ' ') : "Just now"),
+                            score: messageJson.payload.score || 0,
+                            fire_count: messageJson.payload.fire_count || 0,
+                            replies: []
+                        };
+
+                        const argumentId = String(messageJson.payload.argument_id || messageJson.payload.arg_id);
+                        const parentCommentId = messageJson.payload.parent_id;
+
+                        const addReplyRecursive = (existingComments: Comment[]): Comment[] => {
+                            return existingComments.map(commentItem => {
+                                if (String(commentItem.id) === String(parentCommentId)) {
+                                    if (commentItem.replies?.some(existingReply => existingReply.id === incomingComment.id)) return commentItem;
+                                    return { ...commentItem, replies: [incomingComment, ...(commentItem.replies || [])] };
+                                }
+
+                                if (commentItem.replies && commentItem.replies.length > 0) {
+                                    return { ...commentItem, replies: addReplyRecursive(commentItem.replies) };
+                                }
+                                return commentItem;
+                            });
+                        };
+
+                        setArgumentsList(existingArguments => {
+                            return existingArguments.map(argumentItem => {
+                                if (String(argumentItem.id) === argumentId) {
+                                    const existingComments = argumentItem.comments || [];
+
+                                    if (parentCommentId == null || parentCommentId === undefined || parentCommentId === "root-id") {
+                                        if (existingComments.some(commentItem => commentItem.id === incomingComment.id)) return argumentItem;
+                                        return { ...argumentItem, comments: [incomingComment, ...existingComments] };
+                                    }
+                                    return { ...argumentItem, comments: addReplyRecursive(existingComments) };
+                                }
+                                return argumentItem;
+                            });
+                        });
+                    } else if (messageJson.type === "SWING_SCORE_UPDATE") {
+                        const messagePayload = messageJson.payload || messageJson;
+                        const targetCommentId = String(messagePayload.comment_id || messagePayload.commentId || messagePayload.id);
+                        const commentUserId = messagePayload.user_id;
+
+                        const currentUserId = (() => {
+                            try {
+                                const currentStoredToken = localStorage.getItem('user_token_swing');
+                                if (!currentStoredToken) return null;
+
+                                const tokenPayload = JSON.parse(atob(currentStoredToken.split('.')[1]));
+                                return tokenPayload.user_id || tokenPayload.id;
+                            } catch {
+                                return null;
                             }
-                            return { ...argumentItem, comments: addReplyRecursive(existingComments) };
-                        }
-                        return argumentItem;
-                    });
-                });
-            } else if (messageJson.type === "SWING_SCORE_UPDATE") {
-                const messagePayload = messageJson.payload || messageJson;
-                const targetCommentId = String(messagePayload.comment_id || messagePayload.commentId || messagePayload.id);
-                const commentUserId = messagePayload.user_id;
+                        })();
 
-                const currentUserId = (() => {
-                    try {
-                        const currentStoredToken = localStorage.getItem('user_token_swing');
-                        if (!currentStoredToken) return null;
+                        const updateFireRecursive = (existingComments: Comment[]): Comment[] => {
+                            return existingComments.map(commentItem => {
+                                if (commentItem.id === targetCommentId) {
+                                    const isCurrentUsersFire = commentUserId && Number(commentUserId) === Number(currentUserId);
 
-                        const tokenPayload = JSON.parse(atob(currentStoredToken.split('.')[1]));
-                        return tokenPayload.user_id || tokenPayload.id;
-                    } catch {
-                        return null;
+                                    return {
+                                        ...commentItem,
+                                        fire_count: messagePayload.fire_count !== undefined ? messagePayload.fire_count : commentItem.fire_count,
+                                        user_has_fired: isCurrentUsersFire ? !commentItem.user_has_fired : commentItem.user_has_fired
+                                    };
+                                }
+
+                                if (commentItem.replies && commentItem.replies.length > 0) {
+                                    return { ...commentItem, replies: updateFireRecursive(commentItem.replies) };
+                                }
+
+                                return commentItem;
+                            });
+                        };
+
+                        setArgumentsList(currentArgumentsList => {
+                            return currentArgumentsList.map(argumentItem => {
+                                const processedComments = updateFireRecursive(argumentItem.comments || []);
+                                return { ...argumentItem, comments: processedComments };
+                            });
+                        });
+                    } else if (messageJson.type === "NEW_NOTIFICATION") {
+                        const incomingNotification = messageJson.payload || messageJson;
+                        setNotifications(existingNotifications => [incomingNotification, ...existingNotifications]);
                     }
-                })();
-
-                const updateFireRecursive = (existingComments: Comment[]): Comment[] => {
-                    return existingComments.map(commentItem => {
-                        if (commentItem.id === targetCommentId) {
-                            const isCurrentUsersFire = commentUserId && Number(commentUserId) === Number(currentUserId);
-
-                            return {
-                                ...commentItem,
-                                fire_count: messagePayload.fire_count !== undefined ? messagePayload.fire_count : commentItem.fire_count,
-                                user_has_fired: isCurrentUsersFire ? !commentItem.user_has_fired : commentItem.user_has_fired
-                            };
-                        }
-
-                        if (commentItem.replies && commentItem.replies.length > 0) {
-                            return { ...commentItem, replies: updateFireRecursive(commentItem.replies) };
-                        }
-
-                        return commentItem;
-                    });
                 };
 
-                setArgumentsList(currentArgumentsList => {
-                    return currentArgumentsList.map(argumentItem => {
-                        const processedComments = updateFireRecursive(argumentItem.comments || []);
-                        return { ...argumentItem, comments: processedComments };
-                    });
-                });
-            } else if (messageJson.type === "NEW_NOTIFICATION") {
-                const incomingNotification = messageJson.payload || messageJson;
-                setNotifications(existingNotifications => [incomingNotification, ...existingNotifications]);
+            } catch (error) {
+                console.error("Failed to fetch WebSocket ticket or connect:", error);
             }
         };
+
+        initializeConnection();
 
         const handleClickOutside = (clickEvent: MouseEvent) => {
             const notificationElement = notificationRef.current;
@@ -241,10 +285,12 @@ export default function Home() {
         document.addEventListener('mousedown', handleClickOutside);
 
         return () => {
+            isMounted = false;
             document.removeEventListener('mousedown', handleClickOutside);
-            if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+            if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
                 socket.close(1000, 'User session ended');
             }
+            ws.current = null;
         };
     }, []);
 
@@ -276,22 +322,33 @@ export default function Home() {
             replies: []
         };
 
-        const addReplyRecursive = (commentList: Comment[]): Comment[] => {
-            return commentList.map(currentComment => {
-                if (currentComment.id === String(argumentId)) {
-                    if (currentComment.replies?.some(replyItem => replyItem.id === processedComment.id)) return currentComment;
-                    return { ...currentComment, replies: [processedComment, ...(currentComment.replies || [])] };
-                }
-                if (currentComment.replies && currentComment.replies.length > 0) {
-                    return { ...currentComment, replies: addReplyRecursive(currentComment.replies) };
-                }
-                return currentComment;
-            });
-        };
-
         setArgumentsList(existingArgument => existingArgument.map(processedArgument => {
             if (processedArgument.id === selectedArgumentId) {
                 const currentComments = processedArgument.comments || [];
+
+                if (argumentId == "root-id") {
+
+                    if (currentComments.some(comment => comment.id === processedComment.id)) {
+                        return processedArgument;
+                    }
+                    return {
+                        ...processedArgument, comments: [processedComment, ...currentComments]
+                    };
+                }
+                
+                const addReplyRecursive = (commentList: Comment[]): Comment[] => {
+                    return commentList.map(currentComment => {
+                        if (currentComment.id === String(argumentId)) {
+                            if (currentComment.replies?.some(replyItem => replyItem.id === processedComment.id)) return currentComment;
+                            return { ...currentComment, replies: [processedComment, ...(currentComment.replies || [])] };
+                        }
+                        if (currentComment.replies && currentComment.replies.length > 0) {
+                            return { ...currentComment, replies: addReplyRecursive(currentComment.replies) };
+                        }
+                        return currentComment;
+                    });
+                };
+                
                 return { ...processedArgument, comments: addReplyRecursive(currentComments) };
             }
             return processedArgument;
@@ -358,9 +415,14 @@ export default function Home() {
                             className="cursor-pointer hover:opacity-80 transition-opacity select-none relative"
                         >
                             <span className="text-zinc-500 block text-[10px]">NOTIFICATION</span>
-                            <span className={`font-bold ${notifications.length > 0 ? 'text-emerald-400' : 'text-red-500'}`}>
-                                {notifications.length || 0} 🐌
-                            </span>
+                            {(() => {
+                                const unreadCount = notifications.filter(n => !n.is_read).length;
+                                return (
+                                    <span className={`font-bold ${unreadCount > 0 ? 'text-emerald-400' : 'text-red-500'}`}>
+                                        {unreadCount} 🐌
+                                    </span>
+                                );
+                            })()}
 
                             {isNotificationOpen && (
                                 <div className="absolute right-0 mt-2 w-64 bg-zinc-900 border border-zinc-800 rounded shadow-lg p-2 z-50 max-h-64 overflow-y-auto">
@@ -371,14 +433,19 @@ export default function Home() {
                                                 onClick={async () => {
                                                     if (!notif.is_read && notif.id !== undefined && notif.id !== null) {
                                                         await markNotificationAsRead(Number(notif.id));
+
+                                                        setNotifications(prev =>
+                                                            prev.map(n => n.id === notif.id ? { ...n, is_read: true } : n)
+                                                        );
                                                     }
+
                                                     if (notif.argument_id !== undefined && notif.argument_id !== null) {
                                                         setSelectedArgumentId(Number(notif.argument_id));
                                                         setTargetCommentId(notif.comment_id || null);
                                                         setIsReviewOpen(true);
                                                         setIsNotificationOpen(false);
 
-                                                        if (notif.comment_id) {
+                                                        /*if (notif.comment_id) {
                                                             setTimeout(() => {
                                                                 const commentEl = document.getElementById(`comment-${notif.comment_id}`);
                                                                 if (commentEl) {
@@ -388,10 +455,10 @@ export default function Home() {
                                                                     }, 1500);
                                                                 }
                                                             }, 100);
-                                                        }
+                                                        }*/
                                                     }
                                                 }}
-                                                className={`text-[11px] py-2 px-2 border-b border-zinc-800 last:border-0 cursor-pointer transition-colors ${notif.is_read ? 'text-zinc-400 bg-transparent' : 'text-zinc-100 bg-zinc-800/50 font-semibold'}`}
+                                                className={`text-[11px] py-2 px-2 border-b border-zinc-800 last:border-0 cursor-pointer transition-colors ${notif.is_read ? 'text-zinc-400 bg-transparent' : 'text-zinc-100 bg-zinc-800 font-semibold'}`}
                                             >
                                                 <p>{notif.content}</p>
                                                 <span className="text-[9px] text-zinc-500 block mt-0.5">{notif.created_at || "Just now"}</span>

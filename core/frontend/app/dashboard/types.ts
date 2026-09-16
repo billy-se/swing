@@ -22,8 +22,13 @@ export interface Argument {
 
 export interface NotificationItem {
     id?: string | number;
+    argument_id?: number;
+    comment_id?: number;
+    type?: string;
     message?: string;
     content?: string;
+    created_at?: string;
+    is_read?: boolean;
     [key: string]: any;
 }
 
