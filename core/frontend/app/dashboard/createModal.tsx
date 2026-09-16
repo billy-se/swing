@@ -5,10 +5,10 @@ interface CreateArgumentModalProps {
     error: string;
     newTitle: string;
     newContent: string;
-    setNewTitle: (val: string) => void;
-    setNewContent: (val: string) => void;
-    setIsCreateOpen: (val: boolean) => void;
-    onSubmit: (e: React.SyntheticEvent) => void;
+    setNewTitle: (newTitleValue: string) => void;
+    setNewContent: (newContentValue: string) => void;
+    setIsCreateOpen: (isOpen: boolean) => void;
+    onSubmit: (formSubmitEvent: React.SyntheticEvent) => void;
 }
 
 export function CreateArgumentModal({
@@ -40,7 +40,7 @@ export function CreateArgumentModal({
                             type="text" 
                             required
                             value={newTitle} 
-                            onChange={(e) => setNewTitle(e.target.value)}
+                            onChange={(changeEvent) => setNewTitle(changeEvent.target.value)}
                             placeholder="Summary of your architecture or paper proposal..." 
                             className="bg-zinc-950 border border-zinc-800 p-2 rounded text-xs text-zinc-200 outline-none focus:border-zinc-600"
                         />
@@ -52,7 +52,7 @@ export function CreateArgumentModal({
                             required
                             rows={6}
                             value={newContent} 
-                            onChange={(e) => setNewContent(e.target.value)}
+                            onChange={(changeEvent) => setNewContent(changeEvent.target.value)}
                             placeholder="Detail your logical proof, constraints, or code design..." 
                             className="bg-zinc-950 border border-zinc-800 p-2 rounded text-xs text-zinc-200 outline-none focus:border-zinc-600 leading-relaxed"
                         />

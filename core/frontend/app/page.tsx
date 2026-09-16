@@ -1,16 +1,16 @@
-// app/auth/page.tsx
 'use client'
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation';
+import { fetchIt }  from '@/app/dashboard/fetchIt';
+import { setMemoryAccessToken, api } from '@/app/dashboard/api';
 
 //outside random words
 const words = ["PAPER", "DOOR", "THIN", "GRASS", "GRAY", "MINE", "CHALK", "CAT", "DOG", "RUN", "FAST", "BIG", "RED", "SUN", "HAT", "CUP", "PEN", "BOX", "CAR", "SKY", "SIT", "MAP", "NET", "BED", "TOY", "PIG", "PAN"];
-const PORT = process.env.NEXT_PUBLIC_PORT || '2026';
 
 const surrealWords = () => {
-  const dex = Math.floor(Math.random() * words.length);
-  return words[dex];
+  const index = Math.floor(Math.random() * words.length);
+  return words[index];
 };
 
 export default function AuthPage() {
@@ -22,38 +22,42 @@ export default function AuthPage() {
 
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [succcesId, setSuccessId] = useState<number | null>(null);
+  const [successId, setSuccessId] = useState<number | null>(null);
   const [loginMessage, setLoginMessage] = useState('');
 
   const [selectedWords, setSelectedWords] = useState<string[]>(["","","","","",""]);
 
   useEffect(() => {
     let timeoutId: NodeJS.Timeout;
-    const pickMe = () => {
-      const shuffle = [...words].sort(() => 0.5 - Math.random());
-      setSelectedWords(shuffle.slice(0,6));
+
+    const shuffleWords = () => {
+      const shuffledWords = [...words].sort(() => 0.5 - Math.random());
+      setSelectedWords(shuffledWords.slice(0,6));
 
       const delay = Math.random() * 1000 + 500;
-      timeoutId = setTimeout(pickMe, delay);
+      timeoutId = setTimeout(shuffleWords, delay);
     };
 
-    pickMe();
+    shuffleWords();
     return () => clearTimeout(timeoutId);
+
   },[]);
 
   useEffect(() => {
-    if (succcesId || error || loginMessage) {
+
+    if (successId || error || loginMessage) {
       const timer = setTimeout(() => {
         setSuccessId(null);
         setError('');
         setLoginMessage('');
       }, 2000);
+
       return () => clearTimeout(timer);
     }
-  }, [succcesId, error, loginMessage]);
+  }, [successId, error, loginMessage]);
 
-  const handleSignup = async (e: React.SyntheticEvent) => {
-    e.preventDefault();
+  const handleSignup = async (formSubmitEvent: React.SyntheticEvent) => {
+    formSubmitEvent.preventDefault();
 
     setSuccessId(null);
     setLoginMessage('');
@@ -72,31 +76,37 @@ export default function AuthPage() {
     setLoading(true);
 
     try {
-      const res = await fetch(`http://localhost:${PORT}/api/register`, {
+      const response = await fetchIt(`/api/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
       });
 
-      if (!res.ok) {
-        const errorMessage = await res.text();
+      if (!response.ok) {
+        const errorMessage = await response.text();
         setError(errorMessage)
         return;
       }
 
-      const data = await res.json();
+      const responseData = await response.json();
 
-      setSuccessId(data.id);
+      setSuccessId(responseData.id);
 
-    } catch (err: any) {
-      setError(err.message);
+    } catch (error: unknown) {
+
+      if(error instanceof Error){
+        setError(error.message);
+      }else{
+        setError("An unknown error occurred");
+      }
+
     } finally {
       setLoading(false);
     }
   }
 
-  const handleLogin = async (e: React.SyntheticEvent) => {
-    e.preventDefault();
+  const handleLogin = async (formSubmitEvent: React.SyntheticEvent) => {
+    formSubmitEvent.preventDefault();
 
     setSuccessId(null);
     setLoginMessage('');
@@ -110,41 +120,54 @@ export default function AuthPage() {
     }
 
     try {
-      const res = await fetch(`http://localhost:${PORT}/api/login`, {
+      /*const response = await fetchIt(`/api/login`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({email,password})
       });
 
-      if (!res.ok){
-        const errorMessage = await res.text();
+      if (!response.ok){
+        const errorMessage = await response.text();
         setError(errorMessage)
         return;
       }
 
-      const data = await res.json();
+      const responseData = await response.json();
 
-      localStorage.setItem('user_token_swing', data.token);
-      localStorage.setItem('username_swing', data.username);
+      localStorage.setItem('user_token_swing', responseData.token);
+      localStorage.setItem('username_swing', responseData.username);
+      */
+
+      const response = await api.post('/api/login', {
+        email,
+        password,
+      });
 
       setLoginMessage('Login Successful');
       
+      setMemoryAccessToken(response.data.access_token);
+
       router.push('/dashboard');
-    }catch(err: any){
-      setError(err.message)
+    }catch(error: unknown){
+      if (error instanceof Error){
+        setError(error.message);
+      }else{
+        setError("An unknown error occurred");
+      }
+
     }finally{
       setLoading(false);
     }
   }
 
-  const isVisible = loading || succcesId !== null || error !== '' || loginMessage !== '';
+  const isVisible = loading || successId !== null || error !== '' || loginMessage !== '';
 
   return (
     <main className="min-h-screen bg-black text-white font-mono p-8 flex flex-col justify-center items-center relative">
       <div className="absolute top-20 w-full max-w-md px-4 flex flex-col items-center pointer-events-none">
         <div className={`w-full p-3 bg-zinc-950 border ${error ? 'border-red-900 text-red-400' : 'border-zinc-700 text-white'} text-xs text-center shadow-2xl transition-all duration-700 ease-out ${isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-2'}`}>
           
-          {succcesId && !loading && `[ REGISTERED SUCCESSFULLY! ID: ${succcesId} ]`}
+          {successId && !loading && `[ REGISTERED SUCCESSFULLY! ID: ${successId} ]`} {/**testing purposes, might remove the ID */}
           {loginMessage && !loading && `[${loginMessage}]`}
           {error && !loading && `[ ${error} ]`}
         </div>
@@ -159,14 +182,14 @@ export default function AuthPage() {
             type="email" 
             placeholder="EMAIL"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={(changeEvent) => setEmail(changeEvent.target.value)}
             className="bg-black border border-zinc-700 p-2 text-sm focus:outline-none focus:border-white"
           />
           <input 
             type="password" 
             placeholder="PASSWORD"
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            onChange={(changeEvent) => setPassword(changeEvent.target.value)}
             className="bg-black border border-zinc-700 p-2 text-sm focus:outline-none focus:border-white"
           />
 

@@ -2,12 +2,12 @@ package main
 
 import (
 	"database/sql"
-    "encoding/json"
-    "fmt"
-    "log"
-    "net/http"
-    "strings"
-    "time"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+	"strings"
+	"time"
 )
 
 type ArgumentInput struct {
@@ -55,7 +55,7 @@ func (a *App) handleCreateArgument(w http.ResponseWriter, r *http.Request) {
 	var reviewContent string = ""
 	var botCommentID int = 0
 	var botCommentCreatedAt string = ""
-	/*botResponseText, err := CallBotAgent(input.Title, input.Content)//needs to 
+	/*botResponseText, err := CallBotAgent(input.Title, input.Content)//needs to
 	//score here
 	var reviewContent = "Automated security audit failed to generate review."
 	var score int = 50
@@ -101,7 +101,7 @@ func (a *App) handleCreateArgument(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 
-	var initialComments []interface{}// slice of empty array
+	var initialComments []interface{} // slice of empty array
 	if reviewContent != "" {
 		initialComments = []interface{}{
 			map[string]interface{}{
@@ -130,9 +130,9 @@ func (a *App) handleCreateArgument(w http.ResponseWriter, r *http.Request) {
 		"logic_score": logicScore,
 		"author":      username,
 		"created_at":  createdAt,
-		"title": input.Title,
-		"content": input.Content,
-		"comments": initialComments,
+		"title":       input.Title,
+		"content":     input.Content,
+		"comments":    initialComments,
 	})
 
 	msg, _ := json.Marshal(map[string]interface{}{
@@ -155,54 +155,54 @@ if err != nil {
 }*/
 
 func (a *App) handleGetArguments(w http.ResponseWriter, r *http.Request) {
-    if r.Method != http.MethodGet {
-        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-        return
-    }
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 
-    var currentUserID int64 = 0
-    authHeader := r.Header.Get("Authorization")
-    if authHeader != "" {
-        parts := strings.SplitN(authHeader, " ", 2)
-        if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
-            if id, err := a.parseToken(parts[1]); err == nil {
-                currentUserID = int64(id)
-            }
-        }
-    }
+	var currentUserID int64 = 0
+	authHeader := r.Header.Get("Authorization")
+	if authHeader != "" {
+		parts := strings.SplitN(authHeader, " ", 2)
+		if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
+			if id, err := a.parseToken(parts[1]); err == nil {
+				currentUserID = int64(id)
+			}
+		}
+	}
 
-    query := `
+	query := `
         SELECT id, user_id, title, content, logic_score, author, created_at 
         FROM arguments 
         ORDER BY created_at DESC
     `
-    rows, err := a.DB.Query(query)
-    if err != nil {
-        log.Printf("Fetch error: %v", err)
-        http.Error(w, "Failed to fetch arguments", http.StatusInternalServerError)
-        return
-    }
-    defer rows.Close()
+	rows, err := a.DB.Query(query)
+	if err != nil {
+		log.Printf("Fetch error: %v", err)
+		http.Error(w, "Failed to fetch arguments", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
 
-    arguments := []ArgumentResponse{}
+	arguments := []ArgumentResponse{}
 
-    for rows.Next() {
-        var arg ArgumentResponse
-        var rawUserID sql.NullInt32
-        var authorNull sql.NullString
+	for rows.Next() {
+		var arg ArgumentResponse
+		var rawUserID sql.NullInt32
+		var authorNull sql.NullString
 
-        if err := rows.Scan(&arg.ID, &rawUserID, &arg.Title, &arg.Content, &arg.LogicScore, &authorNull, &arg.CreatedAt); err != nil {
-            log.Printf("Scan error on argument row: %v", err)
-            continue
-        }
+		if err := rows.Scan(&arg.ID, &rawUserID, &arg.Title, &arg.Content, &arg.LogicScore, &authorNull, &arg.CreatedAt); err != nil {
+			log.Printf("Scan error on argument row: %v", err)
+			continue
+		}
 
-        if authorNull.Valid && authorNull.String != "" {
-            arg.Author = authorNull.String
-        } else {
-            arg.Author = "ANONYMOUS_DEV"
-        }
+		if authorNull.Valid && authorNull.String != "" {
+			arg.Author = authorNull.String
+		} else {
+			arg.Author = "ANONYMOUS_DEV"
+		}
 
-        commentQuery := `
+		commentQuery := `
             SELECT c.id, c.user_id, c.parent_id, c.content, c.author, c.created_at, c.score,
                    (SELECT COUNT(*) FROM comment_reactions cr WHERE cr.comment_id = c.id AND cr.reaction_type = 'fire') AS fire_count,
                    EXISTS(SELECT 1 FROM comment_reactions cr WHERE cr.comment_id = c.id AND cr.user_id = $2 AND cr.reaction_type = 'fire') AS user_has_fired
@@ -210,98 +210,108 @@ func (a *App) handleGetArguments(w http.ResponseWriter, r *http.Request) {
             WHERE c.argument_id = $1 
             ORDER BY c.created_at ASC
         `
-        commentRows, err := a.DB.Query(commentQuery, arg.ID, currentUserID)
-        if err != nil {
-            arg.Comments = []*CommentInput{}
-            arguments = append(arguments, arg)
-            continue
-        }
+		commentRows, err := a.DB.Query(commentQuery, arg.ID, currentUserID)
+		if err != nil {
+			arg.Comments = []*CommentInput{}
+			arguments = append(arguments, arg)
+			continue
+		}
 
-        var flatComments []CommentInput
-        for commentRows.Next() {
-            var cID int64
-            var cUserID sql.NullInt32
-            var parentID sql.NullInt64
-            var content string
-            var authorNull sql.NullString
-            var createdAt time.Time
-            var score int
-            var fireCount int64
-            var userHasFired bool
+		var flatComments []CommentInput
+		for commentRows.Next() {
+			var cID int64
+			var cUserID sql.NullInt32
+			var parentID sql.NullInt64
+			var content string
+			var authorNull sql.NullString
+			var createdAt time.Time
+			var score int
+			var fireCount int64
+			var userHasFired bool
 
-            if err := commentRows.Scan(&cID, &cUserID, &parentID, &content, &authorNull, &createdAt, &score, &fireCount, &userHasFired); err == nil {
-                var pID *int64
-                if parentID.Valid {
-                    val := parentID.Int64
-                    pID = &val
-                }
+			if err := commentRows.Scan(&cID, &cUserID, &parentID, &content, &authorNull, &createdAt, &score, &fireCount, &userHasFired); err == nil {
+				var pID *int64
+				if parentID.Valid {
+					val := parentID.Int64
+					pID = &val
+				}
 
-                var authorStr string
-                if cUserID.Valid {
-                    authorStr = authorNull.String
-                } else {
-                    authorStr = "BOT_REVIEWER"
-                }
+				var authorStr string
+				if cUserID.Valid {
+					authorStr = authorNull.String
+				} else {
+					authorStr = "BOT_REVIEWER"
+				}
 
-                var actualUserID int64
-                if cUserID.Valid {
-                    actualUserID = int64(cUserID.Int32)
-                }
+				var actualUserID int64
+				if cUserID.Valid {
+					actualUserID = int64(cUserID.Int32)
+				}
 
-                formattedTime := createdAt.Format("2006-01-02 15:04:05")
+				formattedTime := createdAt.Format("2006-01-02 15:04:05")
 
-                flatComments = append(flatComments, CommentInput{
-                    ID:           fmt.Sprintf("%d", cID),
-                    UserID:       actualUserID,
-                    ParentID:     pID,
-                    Author:       authorStr,
-                    Content:      content,
-                    Timestamp:    formattedTime,
-                    Score:        score,
-                    FireCount:    int(fireCount),
-                    UserHasFired: userHasFired,
-                    Replies:      []*CommentInput{},
-                })
-            } else {
-                log.Printf("Comment scan error: %v", err)
-            }
-        }
-        commentRows.Close()
+				flatComments = append(flatComments, CommentInput{
+					ID:           fmt.Sprintf("%d", cID),
+					UserID:       actualUserID,
+					ParentID:     pID,
+					Author:       authorStr,
+					Content:      content,
+					Timestamp:    formattedTime,
+					Score:        score,
+					FireCount:    int(fireCount),
+					UserHasFired: userHasFired,
+					Replies:      []*CommentInput{},
+				})
+			} else {
+				log.Printf("Comment scan error: %v", err)
+			}
+		}
 
-        commentMap := make(map[string]*CommentInput)
-        var rootComments []*CommentInput
+		if err := commentRows.Err(); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		commentRows.Close()
 
-        for i := range flatComments {
-            commentMap[flatComments[i].ID] = &flatComments[i]
-        }
+		commentMap := make(map[string]*CommentInput)
+		var rootComments []*CommentInput
 
-        for i := range flatComments {
-            comment := &flatComments[i]
-            if comment.ParentID == nil {
-                rootComments = append(rootComments, comment)
-            } else {
-                parentIDStr := fmt.Sprintf("%d", *comment.ParentID)
-                if parent, exists := commentMap[parentIDStr]; exists {
-                    parent.Replies = append(parent.Replies, comment)
-                } else {
-                    rootComments = append(rootComments, comment)
-                }
-            }
-        }
+		for i := range flatComments {
+			commentMap[flatComments[i].ID] = &flatComments[i]
+		}
 
-        if rootComments == nil {
-            arg.Comments = []*CommentInput{}
-        } else {
-            arg.Comments = rootComments
-        }
+		for i := range flatComments {
+			comment := &flatComments[i]
+			if comment.ParentID == nil {
+				rootComments = append(rootComments, comment)
+			} else {
+				parentIDStr := fmt.Sprintf("%d", *comment.ParentID)
+				if parent, exists := commentMap[parentIDStr]; exists {
+					parent.Replies = append(parent.Replies, comment)
+				} else {
+					rootComments = append(rootComments, comment)
+				}
+			}
+		}
 
-        arguments = append(arguments, arg)
-    }
+		if rootComments == nil {
+			arg.Comments = []*CommentInput{}
+		} else {
+			arg.Comments = rootComments
+		}
 
-    if arguments == nil {
-        arguments = []ArgumentResponse{}
-    }
+		arguments = append(arguments, arg)
+	}
 
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(arguments)
+	if err := rows.Err(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if arguments == nil {
+		arguments = []ArgumentResponse{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(arguments)
 }
