@@ -51,6 +51,7 @@ func main() {
 	mux.HandleFunc("POST /api/register", app.handleRegister)
 	mux.HandleFunc("POST /api/login", app.handleLogin)
 	mux.HandleFunc("POST /api/refresh", app.handleRefresh)
+	mux.HandleFunc("POST /api/viewer", app.handleViewerMode)
 
 	mux.HandleFunc("POST /api/arguments", app.authMiddleware(app.handleCreateArgument))
 	mux.HandleFunc("GET /api/arguments", app.handleGetArguments)

@@ -44,12 +44,12 @@ api.interceptors.response.use(
     async (error) => {
         const originalRequest = error.config;
 
-        if (error.response?.status === 401 && !originalRequest._retry){
-            if(originalRequest.url === '/api/refresh') {
+        if (error.response?.status === 401 && !originalRequest._retry) {
+            
+            if (originalRequest.url?.includes('/api/refresh')) {
                 memoryAccessToken = null;
                 return Promise.reject(error);
             }
-
             if (isRefreshing) {
                 return new Promise((resolve, reject) => {
                     failedQueue.push({ resolve, reject });
@@ -73,22 +73,19 @@ api.interceptors.response.use(
                     { withCredentials: true }
                 );
 
-                const newAccessToken =  res.data.access_token;
+                const newAccessToken = res.data.access_token;
                 setMemoryAccessToken(newAccessToken);
 
-                api.defaults.headers.common['Authorization'] = `Bearer ${newAccessToken}`;
                 originalRequest.headers['Authorization'] = `Bearer ${newAccessToken}`;
-
                 processQueue(null, newAccessToken);
                 isRefreshing = false;
 
                 return api(originalRequest);
-            } catch (refreshError) {
+            } catch (refreshError: any) {
+                console.log("FULL ERROR OBJECT:", refreshError.response);
                 processQueue(refreshError, null);
                 isRefreshing = false;
-
                 memoryAccessToken = null;
-                window.location.href = '/login';
                 return Promise.reject(refreshError);
             }
         }

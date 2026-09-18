@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react';
 import { Comment } from './types';
-import { fetchIt } from './fetchIt';
+import { api } from './api';
 import { getValidToken } from './auth';
 
 interface CommentFuncProps {
     processedComment: Comment;
     argumentId: string | number;
     targetCommentId?: string | number | null;
+    isViewer?: boolean;
     onAddReply: (
         commentId: string, 
         savedComment: { 
@@ -18,7 +19,7 @@ interface CommentFuncProps {
         }) => void;
 }
 
-export function CommentFunc({ processedComment, argumentId, targetCommentId, onAddReply }: CommentFuncProps) {
+export function CommentFunc({ processedComment, argumentId, targetCommentId, isViewer = false, onAddReply }: CommentFuncProps) {
     const [isReplying, setIsReplying] = useState(false);
     const [replyText, setReplyText] = useState("");
     const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -78,25 +79,11 @@ export function CommentFunc({ processedComment, argumentId, targetCommentId, onA
     }, []);
 
     const handleFireClick = async () => {
-        if (!processedComment.id || processedComment.id === "root-id") return;
+        if (isViewer || !processedComment.id || processedComment.id === "root-id") return;
 
         try {
-            const response = await fetchIt(`/api/comments/fire`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ comment_id: Number(processedComment.id) })
-            });
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                console.error("Fire reaction error -> Status:", response.status, "Message:", errorText);
-                return;
-            }
-
-            const data = await response.json();
-            if (data && data.fire_count !== undefined) {
-                setFireCount(data.fire_count);
-            }
+            const response = await api.post(`/api/comments/fire`, { comment_id: Number(processedComment.id) });
+            if (response.data && response.data.fire_count !== undefined) setFireCount(response.data.fire_count);
         } catch (error) {
             console.error("Error sending fire reaction:", error);
         }
@@ -145,7 +132,7 @@ export function CommentFunc({ processedComment, argumentId, targetCommentId, onA
                 )}
 
                 <div className="flex items-center gap-4 mt-2">
-                    {isLoggedIn && !isOwnComment && (
+                    {isLoggedIn && !isViewer && !isOwnComment && (
                         <button
                             onClick={handleFireClick}
                             className="text-[10px] flex items-center gap-1 text-zinc-400 hover:text-orange-400 transition-colors">
@@ -153,7 +140,7 @@ export function CommentFunc({ processedComment, argumentId, targetCommentId, onA
                         </button>
                     )}
 
-                    {isLoggedIn && (
+                    {isLoggedIn && !isViewer && (
                         <button
                             onClick={() => setIsReplying(!isReplying)} 
                             className="text-[10px] text-zinc-400 hover:text-emerald-400 block">
@@ -162,7 +149,7 @@ export function CommentFunc({ processedComment, argumentId, targetCommentId, onA
                     )}
                 </div>
 
-                {isReplying && isLoggedIn && (
+                {isReplying && isLoggedIn && !isViewer && (
                     <div className="mt-3 pt-3 border-t border-zinc-800 flex flex-col gap-2">
                         <textarea
                             value={replyText}
@@ -177,19 +164,11 @@ export function CommentFunc({ processedComment, argumentId, targetCommentId, onA
                                 if (!replyText.trim()) return;
                                 
                                 try {
-                                    const response = await fetchIt('/api/comments', {
-                                        method: 'POST',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({
+                                    await api.post('/api/comments', {
                                             argument_id: Number(argumentId), 
                                             parent_id: processedComment.id === "root-id" ? null : parseInt(String(processedComment.id)),
-                                            content: replyText
-                                        }),
+                                            content: replyText  
                                     });
-
-                                    if (!response.ok) {
-                                        throw new Error("Failed to save comment");
-                                    }
 
                                     setReplyText("");
                                     setIsReplying(false);
@@ -211,7 +190,8 @@ export function CommentFunc({ processedComment, argumentId, targetCommentId, onA
                             key={replyItem.id} 
                             processedComment={replyItem} 
                             argumentId={argumentId} 
-                            targetCommentId={targetCommentId} 
+                            targetCommentId={targetCommentId}
+                            isViewer={isViewer} 
                             onAddReply={onAddReply} 
                         />
                     ))}
@@ -223,10 +203,11 @@ export function CommentFunc({ processedComment, argumentId, targetCommentId, onA
 
 interface PrimaryCommentInputProps {
     argumentId: string | number;
+    isViewer?: boolean;
     onAddReply: (commentId: string, savedComment: { id: number; content: string; created_at: string; user_id?: number; author?: string }) => void;
 }
 
-export function PrimaryCommentInput({ argumentId, onAddReply }: PrimaryCommentInputProps) {
+export function PrimaryCommentInput({ argumentId, isViewer = false, onAddReply }: PrimaryCommentInputProps) {
     const [primaryText, setPrimaryText] = useState("");
     const [isLoggedIn, setIsLoggedIn] = useState(false);
     const [currentUserId, setCurrentUserId] = useState<number | null>(null);
@@ -256,6 +237,14 @@ export function PrimaryCommentInput({ argumentId, onAddReply }: PrimaryCommentIn
         );
     }
 
+    if (isViewer) {
+        return (
+            <div className="text-zinc-500 text-xs italic py-2">
+                Viewer accounts cannot post comments.
+            </div>
+        );
+    }
+
     return (
         <div className="flex flex-col gap-2">
             <textarea 
@@ -271,21 +260,11 @@ export function PrimaryCommentInput({ argumentId, onAddReply }: PrimaryCommentIn
                     if (!primaryText.trim()) return;
 
                     try {
-                        const response = await fetchIt('/api/comments', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
+                        await api.post('/api/comments', {
                                 argument_id: Number(argumentId),
                                 parent_id: null,
                                 content: primaryText
-                            }),
                         });
-
-                        if (!response.ok) {
-                            const errorText = await response.text();
-                            console.error("Backend error details:", errorText);
-                            throw new Error(`Server error (${response.status}): ${errorText}`);      
-                        }
                         
                         setPrimaryText("");
                     } catch (err) {

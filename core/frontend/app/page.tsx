@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation';
-import { fetchIt }  from '@/app/dashboard/fetchIt';
 import { setMemoryAccessToken, api } from '@/app/dashboard/api';
 
 //outside random words
@@ -56,50 +55,42 @@ export default function AuthPage() {
     }
   }, [successId, error, loginMessage]);
 
+  const validateInput = () => {
+    if (!email || !password || /\s/.test(email)) {
+      setError('PLEASE FILL ALL FIELDS (No space in email)');
+      return false;
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      setError('Invalid Email Format');
+      return false;
+    }
+    if (password.length < 6) {
+      setError('PASSWORD MUST BE AT LEAST 6 CHARACTERS');
+      return false;
+    }
+    return true;
+  }
+
   const handleSignup = async (formSubmitEvent: React.SyntheticEvent) => {
     formSubmitEvent.preventDefault();
-
     setSuccessId(null);
     setLoginMessage('');
     setError('');
-    
-    if (!email || !password || /\s/.test(email)){
-      setError('PLEASE FILL (no space) or COMPLETE');
-      return;
-    }
 
-    if(!email.endsWith("@gmail.com")){
-      setError("Email must ends with '@gmail.com'");
-        return;
-    }
+    if(!validateInput()) return;
 
     setLoading(true);
-
     try {
-      const response = await fetchIt(`/api/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      });
-
-      if (!response.ok) {
-        const errorMessage = await response.text();
-        setError(errorMessage)
-        return;
+      const response = await api.post(`/api/register`, { email, password });
+      setSuccessId(response.data.id);
+    } catch (error: any) {
+      if (error.response && typeof error.response.data == 'string') {
+        setError(error.response.data.trim());
+      } else {
+        setError("Network error. Please check your connection");
       }
-
-      const responseData = await response.json();
-
-      setSuccessId(responseData.id);
-
-    } catch (error: unknown) {
-
-      if(error instanceof Error){
-        setError(error.message);
-      }else{
-        setError("An unknown error occurred");
-      }
-
     } finally {
       setLoading(false);
     }
@@ -107,54 +98,50 @@ export default function AuthPage() {
 
   const handleLogin = async (formSubmitEvent: React.SyntheticEvent) => {
     formSubmitEvent.preventDefault();
-
     setSuccessId(null);
     setLoginMessage('');
-    setLoading(true);
     setError('');
 
     if (!email || !password){
       setError('PLEASE FILL or COMPLETE')
-      setLoading(false);
       return;
     }
 
+    setLoading(true);
     try {
-      /*const response = await fetchIt(`/api/login`, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({email,password})
-      });
-
-      if (!response.ok){
-        const errorMessage = await response.text();
-        setError(errorMessage)
-        return;
-      }
-
-      const responseData = await response.json();
-
-      localStorage.setItem('user_token_swing', responseData.token);
-      localStorage.setItem('username_swing', responseData.username);
-      */
-
-      const response = await api.post('/api/login', {
-        email,
-        password,
-      });
-
+      const response = await api.post('/api/login', { email, password });
+      console.log("LOGIN RESPONSE DATA:", response.data);
       setLoginMessage('Login Successful');
-      
       setMemoryAccessToken(response.data.access_token);
-
       router.push('/dashboard');
-    }catch(error: unknown){
-      if (error instanceof Error){
-        setError(error.message);
-      }else{
-        setError("An unknown error occurred");
+    }catch(error: any){
+      if(error.response && typeof error.response.data == 'string'){
+        setError(error.response.data.trim());
+      } else {
+        setError("Network error. Please check your connection");
       }
+    }finally{
+      setLoading(false);
+    }
+  }
 
+  const handleViewerMode = async (formSubmitEvent: React.SyntheticEvent) => {
+    formSubmitEvent.preventDefault();
+    setSuccessId(null);
+    setLoginMessage('');
+    setError('');
+
+    setLoading(true);
+    try {
+      const response = await api.post('/api/viewer');
+      setMemoryAccessToken(response.data.access_token);
+      router.push('/dashboard');
+    } catch (error: any){
+      if (error.response && typeof error.response.data == 'string') {
+        setError(error.response.data.trim())
+      }else{
+        setError('Network error');
+      }
     }finally{
       setLoading(false);
     }
@@ -212,11 +199,7 @@ export default function AuthPage() {
 
           <button 
             type="button"
-            onClick={() => {
-              localStorage.removeItem('user_token_swing');
-              localStorage.removeItem('username_swing');
-              router.push('/dashboard');
-            }}
+            onClick={handleViewerMode}
             className="mt-2 text-zinc-500 text-xs hover:text-white underline text-center"
           >
             Enter Viewer Mode

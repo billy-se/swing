@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Argument } from './types';
 import { PrimaryCommentInput, CommentFunc } from './comments';
+import { getValidToken } from './auth';
 
 interface ReviewModalProps {
     isReviewOpen: boolean;
@@ -20,6 +21,22 @@ interface ReviewModalProps {
 }
 
 export function ReviewModal({ isReviewOpen, selectedArgument, targetCommentId, setIsReviewOpen, handleAddReply }: ReviewModalProps) {
+    const [isViewer, setIsViewer] = useState(false);
+
+    useEffect(() => {
+        const token = getValidToken();
+        if (token && token !== 'null' && token !== 'undefined') {
+            try {
+                const tokenPayload = JSON.parse(atob(token.split('.')[1]));
+                if (tokenPayload.role === 'viewer') {
+                    setIsViewer(true);
+                }
+            } catch (error) {
+                console.error("Failed to parse user token for role:", error);
+            }
+        }
+    }, [isReviewOpen]);
+
     if (!isReviewOpen || !selectedArgument) return null;
 
     return (
@@ -47,6 +64,7 @@ export function ReviewModal({ isReviewOpen, selectedArgument, targetCommentId, s
                     <div className="mt-2 pt-3 border-t border-zinc-800/60">
                         <PrimaryCommentInput 
                             argumentId={selectedArgument.id} 
+                            isViewer={isViewer}
                             onAddReply={handleAddReply} 
                         />
                     </div>
@@ -58,6 +76,7 @@ export function ReviewModal({ isReviewOpen, selectedArgument, targetCommentId, s
                                 processedComment={processedComment} 
                                 argumentId={selectedArgument.id}
                                 targetCommentId={targetCommentId}
+                                isViewer={isViewer}
                                 onAddReply={handleAddReply} 
                             />
                         ))
