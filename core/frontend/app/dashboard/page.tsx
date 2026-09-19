@@ -102,6 +102,14 @@ export default function Home() {
         }
     };
 
+    const handleLogoutAndReload = () => {
+
+        sessionStorage.clear();
+        localStorage.clear();
+        
+        window.location.href = '/login'; 
+    };
+
     useEffect(() => {
         if (ws.current && (ws.current.readyState === WebSocket.OPEN || ws.current.readyState === WebSocket.CONNECTING)) return;
 

@@ -146,6 +146,11 @@ export default function AuthPage() {
     }
   }, []);*/
 
+  useEffect(() => {
+    sessionStorage.removeItem('user_role');
+    sessionStorage.removeItem('viewer_username');
+}, []);
+
   const handleViewerMode = async (formSubmitEvent: React.SyntheticEvent) => {
     formSubmitEvent.preventDefault();
     setSuccessId(null);
