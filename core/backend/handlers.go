@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math/rand"
@@ -22,37 +23,43 @@ import (
 type contextKey string
 
 const userIDKey contextKey = "user_id"
+const claimsKey contextKey = "claims"
 
 //var jwtSecret = []byte(os.Getenv("JWTSECRET"))
 
 func (a *App) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		fmt.Println("Auth Header received:", r.Header.Get("Authorization"))
+
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
-			http.Error(w, "Missing authorization header", http.StatusUnauthorized)
+			http.Error(w, "[authMiddleware]: Missing authorization header", http.StatusUnauthorized)
 			return
 		}
 
-		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-			http.Error(w, "Invalid authorization format", http.StatusUnauthorized)
+		parts := strings.Split(authHeader, " ")
+		if len(parts) != 2 || parts[0] != "Bearer" {
+			http.Error(w, "Invalid authorization header format", http.StatusUnauthorized)
 			return
 		}
 
-		tokenString := parts[1]
-		userID, err := a.parseToken(tokenString)
+		claims, err := a.parseToken(parts[1])
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusUnauthorized)
+			http.Error(w, "Invalid or expired token", http.StatusUnauthorized)
 			return
+		}
+
+		var userID int
+		if userIDFloat, ok := claims["user_id"].(float64); ok {
+			userID = int(userIDFloat)
 		}
 
 		ctx := context.WithValue(r.Context(), userIDKey, userID)
+		ctx = context.WithValue(ctx, claimsKey, claims)
 		next(w, r.WithContext(ctx))
 	}
 }
 
-func generateJWT(userID int) (string, error) {
+/*func generateJWT(userID int) (string, error) {
 	secret := os.Getenv("JWTSECRET")
 	if secret == "" {
 		secret = "default_fallback_secret"
@@ -65,12 +72,42 @@ func generateJWT(userID int) (string, error) {
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString([]byte(secret))
+}*/
+
+func (a *App) parseToken(tokenString string) (jwt.MapClaims, error) {
+	jwtParseSigningKey := os.Getenv("JWT_ACCESS")
+	if jwtParseSigningKey == "" {
+		return nil, errors.New("[parseToken]: JWT_ACCESS environment variable is missing")
+	}
+
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method")
+		}
+		return []byte(jwtParseSigningKey), nil
+	})
+	if err != nil {
+		fmt.Println("[parseToken]: JWT Parse Error Details:", err)
+		return nil, err
+	}
+	if !token.Valid {
+		return nil, fmt.Errorf("invalid or expired token")
+	}
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return nil, fmt.Errorf("invalid token claims")
+	}
+	/*userIDFloat, ok := claims["user_id"].(float64)
+	if !ok {
+		return nil, fmt.Errorf("invalid user ID in token")
+	}*/
+	return claims, nil
 }
 
 func generateAccessToken(userID int) (string, error) {
-	secret := os.Getenv("JWTSECRET")
-	if secret == "" {
-		secret = "default_fallback_secret"
+	jwtAccessSigningKey := os.Getenv("JWT_ACCESS")
+	if jwtAccessSigningKey == "" {
+		return "", errors.New("JWT_ACCESS environment variable is missing")
 	}
 
 	claims := jwt.MapClaims{
@@ -80,13 +117,13 @@ func generateAccessToken(userID int) (string, error) {
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString([]byte(secret))
+	return token.SignedString([]byte(jwtAccessSigningKey))
 }
 
 func generateRefreshToken(userID int) (string, error) {
-	secret := os.Getenv("JWT_REFRESH_SECRET")
-	if secret == "" {
-		secret = "default_fallback_refresh_secret"
+	jwtRefreshSigningKey := os.Getenv("JWT_REFRESH")
+	if jwtRefreshSigningKey == "" {
+		return "", errors.New("JWT_REFRESH environment variable is missing")
 	}
 
 	claims := jwt.MapClaims{
@@ -96,7 +133,7 @@ func generateRefreshToken(userID int) (string, error) {
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString([]byte(secret))
+	return token.SignedString([]byte(jwtRefreshSigningKey))
 }
 
 func (a *App) handleRefresh(w http.ResponseWriter, r *http.Request) {
@@ -108,7 +145,7 @@ func (a *App) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	cookie, err := r.Cookie("refresh_token_swing")
 	if err != nil {
 		if err == http.ErrNoCookie {
-			http.Error(w, "Unauthorized: No refresh token cookie", http.StatusUnauthorized)
+			http.Error(w, "[handleRefresh]: Unauthorized: No refresh token cookie", http.StatusUnauthorized)
 			return
 		}
 		http.Error(w, "Bad Request", http.StatusBadRequest)
@@ -117,16 +154,16 @@ func (a *App) handleRefresh(w http.ResponseWriter, r *http.Request) {
 
 	refreshTokenString := cookie.Value
 
-	secret := os.Getenv("JWT_REFRESH_SECRET")
-	if secret == "" {
-		secret = "default_fallback_refresh_secret"
+	jwtRefresh := os.Getenv("JWT_REFRESH")
+	if jwtRefresh == "" {
+		http.Error(w, "[handleRefresh]: Cant find JWT_REFRESH", 0)
 	}
 
 	token, err := jwt.Parse(refreshTokenString, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method")
 		}
-		return []byte(secret), nil
+		return []byte(jwtRefresh), nil
 	})
 
 	if err != nil || !token.Valid {
@@ -181,7 +218,7 @@ func (a *App) handleGenerateWSTicket(w http.ResponseWriter, r *http.Request) {
 
 	userID, ok := r.Context().Value(userIDKey).(int)
 	if !ok {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		http.Error(w, "[handleGenerateWSTicket]: Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -204,16 +241,53 @@ func (a *App) handleGenerateWSTicket(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (a *App) handleRefreshToken(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	cookie, err := r.Cookie("refresh_token_swing")
+	if err != nil {
+		http.Error(w, "Missing refresh token cookie", http.StatusUnauthorized)
+		return
+	}
+
+	claims, err := a.parseToken(cookie.Value)
+	if err != nil {
+		http.Error(w, "Invalid or expired refresh token", http.StatusUnauthorized)
+		return
+	}
+
+	userIDFloat, ok := claims["user_id"].(float64)
+	if !ok {
+		http.Error(w, "Invalid user ID in the token claims", http.StatusUnauthorized)
+	}
+	userID := int(userIDFloat)
+
+	newAccessToken, err := generateAccessToken(userID)
+	if err != nil {
+		http.Error(w, "Failed to generate access token", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"access_token": newAccessToken,
+	})
+}
+
 type RegisterInput struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
 }
 
 type User struct {
-	Id             int
-	Email          string
-	HashedPassword string
-	Username       string
+	Id             int    `json:"id"`
+	Email          string `json:"email"`
+	HashedPassword string `json:"-"`
+	Username       string `json:"username"`
+	Role           string `json:"role"`
 }
 
 func (a *App) handleHealthCheck(w http.ResponseWriter, r *http.Request) {
@@ -236,17 +310,40 @@ func cleanJSONResponse(input string) string {
 }
 
 func (a *App) handleGetProfile(w http.ResponseWriter, r *http.Request) {
+	fmt.Println("DEBUG: handleGetProfile was hit! userId =", r.Context().Value(userIDKey))
 	userId := r.Context().Value(userIDKey)
-	if userId == nil {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+
+	claims, _ := r.Context().Value(claimsKey).(jwt.MapClaims)
+
+	var contextUsername string
+	if claims != nil {
+		if uname, ok := claims["username"].(string); ok {
+			contextUsername = uname
+		}
+	}
+
+	if userId == nil || userId == 0 {
+		usernameToUse := "VIEWER"
+		if contextUsername != "" {
+			usernameToUse = contextUsername
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"id":          0,
+			"username":    usernameToUse,
+			"logic_score": 0,
+			"role":        "viewer",
+		})
 		return
 	}
 
 	var username string
 	var logicScore int
-	query := `SELECT username, logic_score FROM users WHERE id = $1`
+	var role string
+	query := `SELECT username, logic_score, role FROM users WHERE id = $1`
 
-	err := a.DB.QueryRowContext(r.Context(), query, userId).Scan(&username, &logicScore)
+	err := a.DB.QueryRowContext(r.Context(), query, userId).Scan(&username, &logicScore, &role)
 	if err != nil {
 		http.Error(w, "User not found", http.StatusNotFound)
 		return
@@ -254,8 +351,10 @@ func (a *App) handleGetProfile(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
+		"id":          userId,
 		"username":    username,
 		"logic_score": logicScore,
+		"role":        role,
 	})
 }
 
@@ -331,11 +430,12 @@ func (a *App) handleRegister(w http.ResponseWriter, r *http.Request) {
 
 	var defaultScore = 1000
 
-	query := `INSERT INTO users (email, email_hash, password_hash, username, logic_score) VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at`
+	query := `INSERT INTO users (email, email_hash, password_hash, username, logic_score, role) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, created_at`
 	var id int
 	var createdAt time.Time
+	defaultRole := "user"
 
-	err = a.DB.QueryRow(query, secureEmail, decryptEmail, hashedPassword, name, defaultScore).Scan(&id, &createdAt)
+	err = a.DB.QueryRow(query, secureEmail, decryptEmail, hashedPassword, name, defaultScore, defaultRole).Scan(&id, &createdAt)
 	if err != nil {
 		log.Printf("Database insert errorrr: %v", err)
 		http.Error(w, "Email might already be taken", http.StatusBadRequest)
@@ -369,10 +469,10 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	//var username string
 	var user User
-	query := "SELECT id, email, password_hash, username FROM users WHERE email_hash = $1"
+	query := "SELECT id, email, password_hash, username, role FROM users WHERE email_hash = $1"
 
 	//creds.Email
-	err = a.DB.QueryRow(query, decryptEmail).Scan(&user.Id, &user.Email, &user.HashedPassword, &user.Username)
+	err = a.DB.QueryRow(query, decryptEmail).Scan(&user.Id, &user.Email, &user.HashedPassword, &user.Username, &user.Role)
 
 	if err == sql.ErrNoRows {
 		http.Error(w, "Invalid username or password", http.StatusUnauthorized)
@@ -392,6 +492,8 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 	//generate short-lived access token
 	accessToken, err := generateAccessToken(user.Id)
 	if err != nil {
+		log.Println("JWT Generation Error:", err)
+
 		http.Error(w, "Failed to generate access token", http.StatusInternalServerError)
 		return
 	}
@@ -399,6 +501,8 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 	//generate long-lived refresh token
 	refreshToken, err := generateRefreshToken(user.Id)
 	if err != nil {
+		log.Println("JWT Generation Error:", err)
+
 		http.Error(w, "Failed to generate refresh token", http.StatusInternalServerError)
 		return
 	}
@@ -426,6 +530,7 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		//"token":   tokenString,
 		"access_token": accessToken,
 		"username":     user.Username, //username,
+		"role":         user.Role,
 	})
 }
 
@@ -575,36 +680,6 @@ func (h *Hub) Run() {
 	}
 }
 
-func (a *App) parseToken(tokenString string) (int, error) {
-	secret := os.Getenv("JWTSECRET")
-	if secret == "" {
-		secret = "default_fallback_secret"
-	}
-
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method")
-		}
-		return []byte(secret), nil
-	})
-	if err != nil {
-		fmt.Println("JWT Parse Error Details:", err)
-		return 0, err
-	}
-	if !token.Valid {
-		return 0, fmt.Errorf("invalid or expired token")
-	}
-	claims, ok := token.Claims.(jwt.MapClaims)
-	if !ok {
-		return 0, fmt.Errorf("invalid token claims")
-	}
-	userIDFloat, ok := claims["user_id"].(float64)
-	if !ok {
-		return 0, fmt.Errorf("invalid user ID in token")
-	}
-	return int(userIDFloat), nil
-}
-
 func (a *App) handleGetNotifications(w http.ResponseWriter, r *http.Request) {
 	userID, ok := r.Context().Value(userIDKey).(int)
 	if !ok {
@@ -683,4 +758,82 @@ func (a *App) handleMarkNotificationRead(w http.ResponseWriter, r *http.Request)
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"message": "Marked as read"})
+}
+
+func (a *App) handleViewerMode(w http.ResponseWriter, r *http.Request) {
+
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		http.Error(w, "Only Post is allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	name := generateNames()
+
+	accessToken, err := generateViewerAccessToken(name)
+	if err != nil {
+		http.Error(w, "Failed to generate viewer session", http.StatusInternalServerError)
+		return
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "refresh_token_swing",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   false,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   -1,
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{
+		"username":     name,
+		"role":         "viewer",
+		"access_token": accessToken,
+	})
+}
+
+func generateViewerAccessToken(username string) (string, error) {
+	jwtAccessSigningKey := os.Getenv("JWT_ACCESS")
+	if jwtAccessSigningKey == "" {
+		return "", errors.New("JWT_ACCESS environment variable is missing")
+	}
+
+	claims := jwt.MapClaims{
+		"user_id":  0,
+		"username": username,
+		"role":     "viewer",
+		"type":     "access",
+		"exp":      time.Now().Add(time.Minute * 5).Unix(),
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString([]byte(jwtAccessSigningKey))
+}
+
+func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "refresh_token_swing",
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   false,
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"message": "Logged out successfully"})
 }

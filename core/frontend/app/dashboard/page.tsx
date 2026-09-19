@@ -1,12 +1,11 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { Comment, Argument, NotificationItem, RawComment } from './types';
+import { Comment, Argument, NotificationItem, RawComment, UserProfile } from './types';
 import { ReviewModal } from './reviewModal';
 import { CreateArgumentModal } from './createModal';
-import { fetchIt } from './fetchIt';
-import { getValidToken } from './auth';
-import { api, setMemoryAccessToken } from '@/app/dashboard/api';
+import { api, setMemoryAccessToken, getMemoryAccessToken } from '@/app/dashboard/api';
+import { useRouter } from 'next/navigation';
 
 export default function Home() {
     const [isReviewOpen, setIsReviewOpen] = useState(false);
@@ -17,11 +16,9 @@ export default function Home() {
 
     const [newTitle, setNewTitle] = useState("");
     const [newContent, setNewContent] = useState("");
-
     const [error, setError] = useState('');
-    const [isLoggedIn, setIsLoggedIn] = useState(false);
-    const [currentUsername, setCurrentUsername] = useState('GUEST');
-    const [logicScore, setLogicScore] = useState(0);
+
+    const [user, setUser] = useState<UserProfile | null>(null);
 
     const ws = useRef<WebSocket | null>(null);
 
@@ -29,7 +26,7 @@ export default function Home() {
     const [isNotificationOpen, setIsNotificationOpen] = useState(false);
     const notificationRef = useRef<HTMLDivElement>(null);
 
-    const unreadCount = notifications.filter(n => !n.is_read).length;
+    const router = useRouter();
 
     const mapComments = (commentsList: RawComment[]): Comment[] => {
         if (!Array.isArray(commentsList)) return [];
@@ -50,10 +47,8 @@ export default function Home() {
 
     const loadArguments = async () => {
         try {
-            const res = await fetchIt(`/api/arguments`);
-            if (!res.ok) throw new Error('Failed to fetch arguments');
-
-            const data = await res.json();
+            const res = await api.get(`/api/arguments`);
+            const data = res.data;
             if (!Array.isArray(data)) return;
 
             const initializedData = data.map((existingArguments: Argument) => ({
@@ -69,11 +64,8 @@ export default function Home() {
 
     const loadNotifications = async () => {
         try {
-            const res = await fetchIt(`/api/notifications`);
-            if (res.ok) {
-                const notifData = await res.json();
-                setNotifications(notifData.notifications || []);
-            }
+            const response = await api.get(`/api/notifications`);
+            setNotifications(response.data.notifications || []);
         } catch (err) {
             console.error("Failed to fetch initial notifications", err);
         }
@@ -81,11 +73,7 @@ export default function Home() {
 
     const markNotificationAsRead = async (notificationId: number) => {
         try {
-            const res = await fetchIt(`/api/notifications/${notificationId}/read`, {
-                method: 'PATCH',
-            });
-            if (!res.ok) throw new Error('Failed to mark notification as read');
-
+            await api.patch(`/api/notifications/${notificationId}/read`);
             setNotifications(currentNotif =>
                 currentNotif.map(notif => notif.id === notificationId ? { ...notif, is_read: true } : notif)
             );
@@ -94,15 +82,58 @@ export default function Home() {
         }
     };
 
+    const handleLogout = async () => {
+        try {
+            await api.post('/api/logout');
+        } catch (err) {
+            console.error("Failed to logout on backend", err);
+        } finally {
+            sessionStorage.removeItem('viewer_username');
+            sessionStorage.removeItem('user_role');
+            setMemoryAccessToken('');
+            
+            setUser(null);
+            
+            setNotifications([]);
+            setIsNotificationOpen(false);
+            
+            console.log("Session cleared. User is now a guest.");
+            router.push('/');
+        }
+    };
+
+    const handleLogoutAndReload = () => {
+
+        sessionStorage.clear();
+        localStorage.clear();
+        
+        window.location.href = '/login'; 
+    };
+
     useEffect(() => {
         if (ws.current && (ws.current.readyState === WebSocket.OPEN || ws.current.readyState === WebSocket.CONNECTING)) return;
 
         let socket: WebSocket | null = null;
         let isMounted = true;
 
-        const initializeConnection = async () => {
-            let token = getValidToken();
+        loadArguments();
 
+        const initializeConnection = async () => {
+            const sessionViewerName = sessionStorage.getItem('viewer_username');
+            const sessionRole = sessionStorage.getItem('user_role');
+
+            let fetchedRole = 'user';
+            let token = getMemoryAccessToken();
+
+            if (sessionRole === 'viewer' && sessionViewerName) {
+                setUser({
+                    id: null,
+                    username: sessionViewerName,
+                    role: 'viewer',
+                    logicScore: 0
+                });
+                fetchedRole = 'viewer';
+            } else {
             if (!token) {
                 try {
                     const refreshRes = await api.post('/api/refresh');
@@ -113,51 +144,49 @@ export default function Home() {
                 }
             }
 
-            loadArguments();
-            loadNotifications();
-
             if (token) {
-                setIsLoggedIn(true);
                 try {
                     const res = await api.get('/api/user/profile');
                     const data = res.data;
-                    if (data.username) setCurrentUsername(data.username);
-                    if (data.logic_score !== undefined) setLogicScore(data.logic_score);
+                    
+                    if (data.role) {
+                        fetchedRole = data.role;
+                    }
+                    
+                    setUser({
+                        id: data.id || data.user_id || null,
+                        username: data.username || 'ANONYMOUS',
+                        role: fetchedRole,
+                        logicScore: data.logic_score ?? 0
+                    });
+
+                    if (fetchedRole !== 'viewer'){
+                        loadNotifications();
+                    }
                 } catch (err) {
                     console.error("Failed to load profile", err);
+                    setUser(null);
                 }
             } else {
-                setIsLoggedIn(false);
-                setCurrentUsername('GUEST');
+                setUser(null);
+            }
+
+            }
+
+            if (fetchedRole === 'viewer' || !token) {
+                return;
             }
 
             try {
-                const wsBaseUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:2026';
-                let wsUrl = `${wsBaseUrl}/ws`;
-
-                if (token) {
-                    const ticketRes = await api.post('/api/ws-ticket');
-                    const ticket = ticketRes.data.ticket;
-                    wsUrl = `${wsBaseUrl}/ws?ticket=${ticket}`;
-                }
+                const wsBaseUrl = process.env.NEXT_PUBLIC_WS_URL;
+                const ticketRes = await api.post('/api/ws-ticket');
+                const ticket = ticketRes.data.ticket;
+                const wsUrl = `${wsBaseUrl}/ws?ticket=${ticket}`;
 
                 if (!isMounted) return;
 
-                console.log("Attempting to connect to:", wsUrl);
                 socket = new WebSocket(wsUrl);
                 ws.current = socket;
-
-                socket.onopen = () => {
-                    console.log("WebSocket successfully connected via ticket!");
-                };
-
-                socket.onerror = (error) => {
-                    console.error("WebSocket error occurred:", error);
-                };
-
-                socket.onclose = (event) => {
-                    console.log("WebSocket closed:", event.reason);
-                };
 
                 socket.onmessage = (fromServerJson) => {
                     const messageJson = JSON.parse(fromServerJson.data);
@@ -195,7 +224,6 @@ export default function Home() {
                                     if (commentItem.replies?.some(existingReply => existingReply.id === incomingComment.id)) return commentItem;
                                     return { ...commentItem, replies: [incomingComment, ...(commentItem.replies || [])] };
                                 }
-
                                 if (commentItem.replies && commentItem.replies.length > 0) {
                                     return { ...commentItem, replies: addReplyRecursive(commentItem.replies) };
                                 }
@@ -207,7 +235,6 @@ export default function Home() {
                             return existingArguments.map(argumentItem => {
                                 if (String(argumentItem.id) === argumentId) {
                                     const existingComments = argumentItem.comments || [];
-
                                     if (parentCommentId == null || parentCommentId === undefined || parentCommentId === "root-id") {
                                         if (existingComments.some(commentItem => commentItem.id === incomingComment.id)) return argumentItem;
                                         return { ...argumentItem, comments: [incomingComment, ...existingComments] };
@@ -222,34 +249,19 @@ export default function Home() {
                         const targetCommentId = String(messagePayload.comment_id || messagePayload.commentId || messagePayload.id);
                         const commentUserId = messagePayload.user_id;
 
-                        const currentUserId = (() => {
-                            try {
-                                const currentStoredToken = localStorage.getItem('user_token_swing');
-                                if (!currentStoredToken) return null;
-
-                                const tokenPayload = JSON.parse(atob(currentStoredToken.split('.')[1]));
-                                return tokenPayload.user_id || tokenPayload.id;
-                            } catch {
-                                return null;
-                            }
-                        })();
-
                         const updateFireRecursive = (existingComments: Comment[]): Comment[] => {
                             return existingComments.map(commentItem => {
                                 if (commentItem.id === targetCommentId) {
-                                    const isCurrentUsersFire = commentUserId && Number(commentUserId) === Number(currentUserId);
-
+                                    const isCurrentUsersFire = commentUserId && user?.id && Number(commentUserId) === Number(user.id);
                                     return {
                                         ...commentItem,
                                         fire_count: messagePayload.fire_count !== undefined ? messagePayload.fire_count : commentItem.fire_count,
                                         user_has_fired: isCurrentUsersFire ? !commentItem.user_has_fired : commentItem.user_has_fired
                                     };
                                 }
-
                                 if (commentItem.replies && commentItem.replies.length > 0) {
                                     return { ...commentItem, replies: updateFireRecursive(commentItem.replies) };
                                 }
-
                                 return commentItem;
                             });
                         };
@@ -276,7 +288,6 @@ export default function Home() {
         const handleClickOutside = (clickEvent: MouseEvent) => {
             const notificationElement = notificationRef.current;
             const clickedTarget = clickEvent.target as Node;
-
             const isClickOutsideNotification = notificationElement && !notificationElement.contains(clickedTarget);
 
             if (isClickOutsideNotification) setIsNotificationOpen(false);
@@ -295,26 +306,18 @@ export default function Home() {
     }, []);
 
     const selectedArgument = (argumentsList || []).find((argumentItem) => argumentItem.id === selectedArgumentId) ?? null;
+    
+    const isViewer = user?.role === 'viewer';
+    const isLoggedIn = user !== null;
+    const currentUsername = user?.username ?? 'GUEST';
+    const logicScore = user?.logicScore ?? 0;
 
     const handleAddReply = (argumentId: string, incomingComment: { id: number; content: string; created_at: string; user_id?: number }) => {
         if (!selectedArgumentId) return;
 
-        const currentUserId = (() => {
-            try {
-                const token = localStorage.getItem('user_token_swing');
-
-                if (!token) return null;
-                const payload = JSON.parse(atob(token.split('.')[1]));
-
-                return payload.user_id || payload.id;
-            } catch {
-                return null;
-            }
-        })();
-
         const processedComment: Comment = {
             id: String(incomingComment.id),
-            user_id: incomingComment.user_id || currentUserId,
+            user_id: incomingComment.user_id || user?.id || "",
             author: currentUsername,
             content: incomingComment.content,
             timestamp: incomingComment.created_at ? incomingComment.created_at.split('.')[0].replace('T', ' ') : "Just now",
@@ -326,8 +329,7 @@ export default function Home() {
             if (processedArgument.id === selectedArgumentId) {
                 const currentComments = processedArgument.comments || [];
 
-                if (argumentId == "root-id") {
-
+                if (argumentId === "root-id") {
                     if (currentComments.some(comment => comment.id === processedComment.id)) {
                         return processedArgument;
                     }
@@ -360,21 +362,8 @@ export default function Home() {
         setError('');
 
         try {
-            const response = await fetchIt(`/api/arguments`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ title: newTitle, content: newContent }),
-            });
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                setError(errorText);
-                return;
-            }
-
-            const newArgument = await response.json();
+            const response = await api.post(`/api/arguments`, { title: newTitle, content: newContent });
+            const newArgument = response.data;
 
             setArgumentsList(existingArguments => {
                 const processedArgument = {
@@ -390,105 +379,96 @@ export default function Home() {
             setIsCreateOpen(false);
 
         } catch (err: any) {
-            setError(err.message);
+            const errorMsg = err.response?.data || err.message || 'Failed to create argument';
+            setError(typeof errorMsg === 'string' ? errorMsg : JSON.stringify(errorMsg));
         }
     };
 
     return (
-        <main className="min-h-screen bg-black text-zinc-100 font-mono p-6 md:p-12 flex justify-center">
-            <div className="w-full max-w-6xl flex flex-col gap-6">
+    <main className="h-[100dvh] w-full bg-black text-zinc-100 font-mono p-6 md:p-12 flex justify-center overflow-hidden box-border">
+        <div className="w-full max-w-6xl flex flex-col gap-4 h-[calc(100dvh-3rem)] md:h-[calc(100dvh-6rem)] overflow-hidden box-border">
 
-                <header className="bg-zinc-950 border border-zinc-800 rounded-lg p-4 md:p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                    <div className="flex items-center gap-3">
-                        <div>
-                            <h1 className="text-sm font-semibold tracking-widest uppercase text-zinc-200">
-                                {currentUsername}
-                            </h1>
-                            <p className="text-[10px] text-zinc-500">Username</p>
-                        </div>
+            <header className="bg-zinc-950 border border-zinc-800 rounded-lg p-4 md:p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 shrink-0">
+                <div className="flex items-center gap-3">
+                    <div>
+                        <h1 className="text-sm font-semibold tracking-widest uppercase text-zinc-200">
+                            {currentUsername}
+                        </h1>
+                        <p className="text-[10px] text-zinc-500">Username</p>
                     </div>
+                </div>
 
-                    <div className="flex items-center gap-6 text-xs border-t sm:border-t-0 border-zinc-800 pt-3 sm:pt-0 w-full sm:w-auto justify-between sm:justify-end">
-                        <div
-                            ref={notificationRef}
-                            onClick={() => setIsNotificationOpen(!isNotificationOpen)}
-                            className="cursor-pointer hover:opacity-80 transition-opacity select-none relative"
-                        >
-                            <span className="text-zinc-500 block text-[10px]">NOTIFICATION</span>
-                            {(() => {
-                                const unreadCount = notifications.filter(n => !n.is_read).length;
-                                return (
-                                    <span className={`font-bold ${unreadCount > 0 ? 'text-emerald-400' : 'text-red-500'}`}>
-                                        {unreadCount} 🐌
-                                    </span>
-                                );
-                            })()}
+                <div className="flex items-center gap-6 text-xs border-t sm:border-t-0 border-zinc-800 pt-3 sm:pt-0 w-full sm:w-auto justify-between sm:justify-end">
+                    {!isViewer && isLoggedIn && (
+                    <div
+                        ref={notificationRef}
+                        onClick={() => setIsNotificationOpen(!isNotificationOpen)}
+                        className="cursor-pointer transition-opacity select-none relative hover:opacity-80"
+                    >
+                        <span className="text-zinc-500 block text-[10px]">NOTIFICATION</span>
+                        {(() => {
+                            const unreadCount = notifications.filter(n => !n.is_read).length;
+                            return (
+                                <span className={`font-bold ${unreadCount > 0 ? 'text-emerald-400' : 'text-red-500'}`}>
+                                    {unreadCount} 🐌
+                                </span>
+                            );
+                        })()}
 
-                            {isNotificationOpen && (
-                                <div className="absolute right-0 mt-2 w-64 bg-zinc-900 border border-zinc-800 rounded shadow-lg p-2 z-50 max-h-64 overflow-y-auto">
-                                    {notifications.length > 0 ? (
-                                        notifications.map((notif) => (
-                                            <div
-                                                key={notif.id}
-                                                onClick={async () => {
-                                                    if (!notif.is_read && notif.id !== undefined && notif.id !== null) {
-                                                        await markNotificationAsRead(Number(notif.id));
+                        {isNotificationOpen && (
+                            <div className="absolute right-0 mt-2 w-64 bg-zinc-900 border border-zinc-800 rounded shadow-lg p-2 z-50 max-h-64 overflow-y-auto">
+                                {notifications.length > 0 ? (
+                                    notifications.map((notif) => (
+                                        <div
+                                            key={notif.id}
+                                            onClick={async () => {
+                                                if (!notif.is_read && notif.id !== undefined && notif.id !== null) {
+                                                    await markNotificationAsRead(Number(notif.id));
+                                                    setNotifications(prev =>
+                                                        prev.map(n => n.id === notif.id ? { ...n, is_read: true } : n)
+                                                    );
+                                                }
 
-                                                        setNotifications(prev =>
-                                                            prev.map(n => n.id === notif.id ? { ...n, is_read: true } : n)
-                                                        );
-                                                    }
-
-                                                    if (notif.argument_id !== undefined && notif.argument_id !== null) {
-                                                        setSelectedArgumentId(Number(notif.argument_id));
-                                                        setTargetCommentId(notif.comment_id || null);
-                                                        setIsReviewOpen(true);
-                                                        setIsNotificationOpen(false);
-
-                                                        /*if (notif.comment_id) {
-                                                            setTimeout(() => {
-                                                                const commentEl = document.getElementById(`comment-${notif.comment_id}`);
-                                                                if (commentEl) {
-                                                                    commentEl.classList.add('bg-emerald-900/40', 'transition-colors', 'duration-500');
-                                                                    setTimeout(() => {
-                                                                        commentEl.classList.remove('bg-emerald-900/40');
-                                                                    }, 1500);
-                                                                }
-                                                            }, 100);
-                                                        }*/
-                                                    }
-                                                }}
-                                                className={`text-[11px] py-2 px-2 border-b border-zinc-800 last:border-0 cursor-pointer transition-colors ${notif.is_read ? 'text-zinc-400 bg-transparent' : 'text-zinc-100 bg-zinc-800 font-semibold'}`}
-                                            >
-                                                <p>{notif.content}</p>
-                                                <span className="text-[9px] text-zinc-500 block mt-0.5">{notif.created_at || "Just now"}</span>
-                                            </div>
-                                        ))
-                                    ) : (
-                                        <div className="text-zinc-500 text-[11px] py-1 text-center">No new notifications</div>
-                                    )}
-                                </div>
-                            )}
-                        </div>
-                        
-                        <div>
-                            <span className="text-zinc-500 block text-[10px]">LOGIC SCORE</span>
-                            <span className="text-emerald-400 font-bold">{logicScore}</span>
-                        </div>
-                    </div>
-                </header>
-                
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    <div className="lg:col-span-2 flex flex-col gap-4">
-                        <div className="flex justify-between items-center bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-xs text-zinc-400">
-                            <span className="text-zinc-200 font-bold tracking-wider px-1">ACTIVE DEBATES</span>
-                            <div className="flex gap-10 bg-zinc-900/60 p-1 rounded-lg border border-zinc-800">
-                                <button className="text-emerald-400 hover:underline">Recent</button>
-                                <button className="hover:text-zinc-200">Top</button>
-                                <button className="text-zinc-400 hover:text-zinc-200">WatchList</button>
+                                                if (notif.argument_id !== undefined && notif.argument_id !== null) {
+                                                    setSelectedArgumentId(Number(notif.argument_id));
+                                                    setTargetCommentId(notif.comment_id || null);
+                                                    setIsReviewOpen(true);
+                                                    setIsNotificationOpen(false);
+                                                }
+                                            }}
+                                            className={`text-[11px] py-2 px-2 border-b border-zinc-800 last:border-0 cursor-pointer transition-colors ${notif.is_read ? 'text-zinc-400 bg-transparent' : 'text-zinc-100 bg-zinc-800 font-semibold'}`}
+                                        >
+                                            <p>{notif.content}</p>
+                                            <span className="text-[9px] text-zinc-500 block mt-0.5">{notif.created_at || "Just now"}</span>
+                                        </div>
+                                    ))
+                                ) : (
+                                    <div className="text-zinc-500 text-[11px] py-1 text-center">No new notifications</div>
+                                )}
                             </div>
+                        )}
+                    </div>
+                    )}
+                    
+                    <div>
+                        <span className="text-zinc-500 block text-[10px]">LOGIC SCORE</span>
+                        <span className="text-emerald-400 font-bold">{logicScore}</span>
+                    </div>
+                </div>
+            </header>
+            
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-0 overflow-hidden">
+                <div className="lg:col-span-2 flex flex-col gap-4 h-full min-h-0">
+                    <div className="flex justify-between items-center bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-xs text-zinc-400 shrink-0">
+                        <span className="text-zinc-200 font-bold tracking-wider px-1">ACTIVE DEBATES</span>
+                        <div className="flex gap-10 bg-zinc-900/60 p-1 rounded-lg border border-zinc-800">
+                            <button className="text-emerald-400 hover:underline">Recent</button>
+                            <button className="hover:text-zinc-200">Top</button>
+                            <button className="text-zinc-400 hover:text-zinc-200">WatchList</button>
                         </div>
+                    </div>
 
+                    <div className="flex-1 min-h-0 overflow-y-auto space-y-4 pr-2 pb-6 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
                         {(argumentsList || []).map((check) => (
                             <div key={check.id} className="bg-zinc-950 border border-zinc-800 rounded-lg p-5 flex flex-col gap-4 hover:border-zinc-700 transition-colors">
                                 <div className="flex justify-between items-center text-[10px] text-zinc-500">
@@ -515,66 +495,78 @@ export default function Home() {
                             </div>
                         ))}
                     </div>
+                </div>
 
-                    <div className="flex flex-col gap-6">
-                        {isLoggedIn && (
-                            <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-5 flex flex-col gap-4">
-                                <h2 className="text-xs font-bold tracking-wider uppercase text-zinc-200">
-                                    SUBMIT FOR REVIEW
-                                </h2>
-                                <p className="text-xs text-zinc-500">
-                                    Submit a code proposal, paper, or architectural argument to the blind review pool.
-                                </p>
-                                <button className="w-full bg-emerald-600 hover:bg-emerald-500 text-black font-semibold py-2 rounded text-xs transition-colors"
-                                    onClick={() => setIsCreateOpen(true)}>
-                                    Create an Argument
-                                </button>
-                            </div>
-                        )}
-
-                        <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-5 flex flex-col gap-3">
+                <div className="flex flex-col gap-6 h-full min-h-0 overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+                    {isLoggedIn && !isViewer && (
+                        <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-5 flex flex-col gap-4 shrink-0">
                             <h2 className="text-xs font-bold tracking-wider uppercase text-zinc-200">
-                                Stats:
+                                SUBMIT FOR REVIEW
                             </h2>
-                            <div className="flex flex-col gap-2 text-xs text-zinc-400">
-                                <div className="flex justify-between">
-                                    <span>Peer Reviews Given:</span>
-                                    <span className="text-zinc-200">14</span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span>Logic Consensus Rate:</span>
-                                    <span className="text-emerald-400">89%</span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span>Anonymity Integrity:</span>
-                                    <span className="text-blue-400">Secure</span>
-                                </div>
+                            <p className="text-xs text-zinc-500">
+                                Submit a code proposal, paper, or architectural argument to the blind review pool.
+                            </p>
+                            <button className="w-full bg-emerald-600 hover:bg-emerald-500 text-black font-semibold py-2 rounded text-xs transition-colors"
+                                onClick={() => setIsCreateOpen(true)}>
+                                Create an Argument
+                            </button>
+                        </div>
+                    )}
+
+                    <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-5 flex flex-col gap-3 shrink-0">
+                        <h2 className="text-xs font-bold tracking-wider uppercase text-zinc-200">
+                            Stats:
+                        </h2>
+                        <div className="flex flex-col gap-2 text-xs text-zinc-400">
+                            <div className="flex justify-between">
+                                <span>Peer Reviews Given:</span>
+                                <span className="text-zinc-200">14</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span>Logic Consensus Rate:</span>
+                                <span className="text-emerald-400">89%</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span>Anonymity Integrity:</span>
+                                <span className="text-blue-400">Secure</span>
                             </div>
                         </div>
                     </div>
+
+                    {!isViewer && isLoggedIn && (
+                        <div className="flex items-center gap-4 shrink-0">
+                            <button 
+                                onClick={handleLogout}
+                                className="bg-zinc-900 hover:bg-zinc-800 text-red-400 hover:text-red-300 px-3 py-1 rounded border border-zinc-800 transition-colors"
+                            >
+                                Logout
+                            </button>
+                        </div>
+                    )}
                 </div>
-
-                <ReviewModal
-                    isReviewOpen={isReviewOpen}
-                    selectedArgument={selectedArgument}
-                    targetCommentId={targetCommentId}
-                    setIsReviewOpen={setIsReviewOpen}
-                    handleAddReply={handleAddReply}
-                />
-
-                {isLoggedIn && (
-                    <CreateArgumentModal
-                        isCreateOpen={isCreateOpen}
-                        error={error}
-                        newTitle={newTitle}
-                        newContent={newContent}
-                        setNewTitle={setNewTitle}
-                        setNewContent={setNewContent}
-                        setIsCreateOpen={setIsCreateOpen}
-                        onSubmit={handleCreateSubmit}
-                    />
-                )}
             </div>
-        </main>
-    );
+            
+            <ReviewModal
+                isReviewOpen={isReviewOpen}
+                selectedArgument={selectedArgument}
+                targetCommentId={targetCommentId}
+                setIsReviewOpen={setIsReviewOpen}
+                handleAddReply={handleAddReply}
+            />
+
+            {isLoggedIn && !isViewer && (
+                <CreateArgumentModal
+                    isCreateOpen={isCreateOpen}
+                    error={error}
+                    newTitle={newTitle}
+                    newContent={newContent}
+                    setNewTitle={setNewTitle}
+                    setNewContent={setNewContent}
+                    setIsCreateOpen={setIsCreateOpen}
+                    onSubmit={handleCreateSubmit}
+                />
+            )}
+        </div>
+    </main>
+);
 }

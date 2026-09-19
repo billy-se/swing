@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Comment } from './types';
-import { fetchIt } from './fetchIt';
+import { api } from './api';
 import { getValidToken } from './auth';
 
 interface CommentFuncProps {
@@ -22,12 +22,12 @@ export function CommentFunc({ processedComment, argumentId, targetCommentId, onA
     const [isReplying, setIsReplying] = useState(false);
     const [replyText, setReplyText] = useState("");
     const [isLoggedIn, setIsLoggedIn] = useState(false);
+    const [isViewer, setIsViewer] = useState(false);
     const [currentUserId, setCurrentUserId] = useState<number | null>(null);
     const [currentUsername, setCurrentUsername] = useState<string>("");
     const [isCollapsed, setIsCollapsed] = useState(true);
     
     const [fireCount, setFireCount] = useState(processedComment.fire_count || processedComment.score || 0); 
-
     const [isHighlighted, setIsHighlighted] = useState(false);
 
     useEffect(() => {
@@ -62,6 +62,11 @@ export function CommentFunc({ processedComment, argumentId, targetCommentId, onA
     }, [targetCommentId, processedComment]);
 
     useEffect(() => {
+        const sessionRole = sessionStorage.getItem('user_role') || localStorage.getItem('user_role');
+        if (sessionRole === 'viewer') {
+            setIsViewer(true);
+        }
+
         const token = getValidToken();
 
         if (token && token !== 'null' && token !== 'undefined') {
@@ -71,6 +76,10 @@ export function CommentFunc({ processedComment, argumentId, targetCommentId, onA
                 const tokenPayload = JSON.parse(atob(token.split('.')[1]));
                 setCurrentUserId(tokenPayload.user_id || tokenPayload.id);
                 setCurrentUsername(tokenPayload.username || tokenPayload.author || "");
+                
+                if (tokenPayload.role === 'viewer') {
+                    setIsViewer(true);
+                }
             } catch (error) {
                 console.error("Failed to parse user token:", error);
             }
@@ -78,25 +87,11 @@ export function CommentFunc({ processedComment, argumentId, targetCommentId, onA
     }, []);
 
     const handleFireClick = async () => {
-        if (!processedComment.id || processedComment.id === "root-id") return;
+        if (isViewer || !processedComment.id || processedComment.id === "root-id") return;
 
         try {
-            const response = await fetchIt(`/api/comments/fire`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ comment_id: Number(processedComment.id) })
-            });
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                console.error("Fire reaction error -> Status:", response.status, "Message:", errorText);
-                return;
-            }
-
-            const data = await response.json();
-            if (data && data.fire_count !== undefined) {
-                setFireCount(data.fire_count);
-            }
+            const response = await api.post(`/api/comments/fire`, { comment_id: Number(processedComment.id) });
+            if (response.data && response.data.fire_count !== undefined) setFireCount(response.data.fire_count);
         } catch (error) {
             console.error("Error sending fire reaction:", error);
         }
@@ -145,7 +140,7 @@ export function CommentFunc({ processedComment, argumentId, targetCommentId, onA
                 )}
 
                 <div className="flex items-center gap-4 mt-2">
-                    {isLoggedIn && !isOwnComment && (
+                    {isLoggedIn && !isViewer && !isOwnComment && (
                         <button
                             onClick={handleFireClick}
                             className="text-[10px] flex items-center gap-1 text-zinc-400 hover:text-orange-400 transition-colors">
@@ -153,7 +148,7 @@ export function CommentFunc({ processedComment, argumentId, targetCommentId, onA
                         </button>
                     )}
 
-                    {isLoggedIn && (
+                    {isLoggedIn && !isViewer && (
                         <button
                             onClick={() => setIsReplying(!isReplying)} 
                             className="text-[10px] text-zinc-400 hover:text-emerald-400 block">
@@ -162,7 +157,7 @@ export function CommentFunc({ processedComment, argumentId, targetCommentId, onA
                     )}
                 </div>
 
-                {isReplying && isLoggedIn && (
+                {isReplying && isLoggedIn && !isViewer && (
                     <div className="mt-3 pt-3 border-t border-zinc-800 flex flex-col gap-2">
                         <textarea
                             value={replyText}
@@ -177,19 +172,11 @@ export function CommentFunc({ processedComment, argumentId, targetCommentId, onA
                                 if (!replyText.trim()) return;
                                 
                                 try {
-                                    const response = await fetchIt('/api/comments', {
-                                        method: 'POST',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({
+                                    await api.post('/api/comments', {
                                             argument_id: Number(argumentId), 
                                             parent_id: processedComment.id === "root-id" ? null : parseInt(String(processedComment.id)),
-                                            content: replyText
-                                        }),
+                                            content: replyText  
                                     });
-
-                                    if (!response.ok) {
-                                        throw new Error("Failed to save comment");
-                                    }
 
                                     setReplyText("");
                                     setIsReplying(false);
@@ -211,7 +198,7 @@ export function CommentFunc({ processedComment, argumentId, targetCommentId, onA
                             key={replyItem.id} 
                             processedComment={replyItem} 
                             argumentId={argumentId} 
-                            targetCommentId={targetCommentId} 
+                            targetCommentId={targetCommentId}
                             onAddReply={onAddReply} 
                         />
                     ))}
@@ -229,10 +216,16 @@ interface PrimaryCommentInputProps {
 export function PrimaryCommentInput({ argumentId, onAddReply }: PrimaryCommentInputProps) {
     const [primaryText, setPrimaryText] = useState("");
     const [isLoggedIn, setIsLoggedIn] = useState(false);
+    const [isViewer, setIsViewer] = useState(false);
     const [currentUserId, setCurrentUserId] = useState<number | null>(null);
     const [currentUsername, setCurrentUsername] = useState<string>("");
 
     useEffect(() => {
+        const sessionRole = sessionStorage.getItem('user_role') || localStorage.getItem('user_role');
+        if (sessionRole === 'viewer') {
+            setIsViewer(true);
+        }
+
         const token = getValidToken();
 
         if (token && token !== 'null' && token !== 'undefined') {
@@ -242,6 +235,10 @@ export function PrimaryCommentInput({ argumentId, onAddReply }: PrimaryCommentIn
                 const tokenPayload = JSON.parse(atob(token.split('.')[1]));
                 setCurrentUserId(tokenPayload.user_id || tokenPayload.id);
                 setCurrentUsername(tokenPayload.username || tokenPayload.author || "");
+                
+                if (tokenPayload.role === 'viewer') {
+                    setIsViewer(true);
+                }
             } catch (error) {
                 console.error("Failed to parse user token:", error);
             }
@@ -252,6 +249,14 @@ export function PrimaryCommentInput({ argumentId, onAddReply }: PrimaryCommentIn
         return (
             <div className="text-zinc-500 text-xs italic py-2">
                 Log in first to post a comment :)
+            </div>
+        );
+    }
+
+    if (isViewer) {
+        return (
+            <div className="text-zinc-500 text-xs italic py-2">
+                Viewer accounts cannot post comments.
             </div>
         );
     }
@@ -271,21 +276,11 @@ export function PrimaryCommentInput({ argumentId, onAddReply }: PrimaryCommentIn
                     if (!primaryText.trim()) return;
 
                     try {
-                        const response = await fetchIt('/api/comments', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
+                        await api.post('/api/comments', {
                                 argument_id: Number(argumentId),
                                 parent_id: null,
                                 content: primaryText
-                            }),
                         });
-
-                        if (!response.ok) {
-                            const errorText = await response.text();
-                            console.error("Backend error details:", errorText);
-                            throw new Error(`Server error (${response.status}): ${errorText}`);      
-                        }
                         
                         setPrimaryText("");
                     } catch (err) {

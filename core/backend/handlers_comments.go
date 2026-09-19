@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/lib/pq"
 )
 
 type CommentInput struct {
@@ -194,6 +196,11 @@ func (a *App) handleCreateComment(w http.ResponseWriter, r *http.Request) {
 
 	err = a.DB.QueryRow(query, input.ArgumentID, input.ParentID, userID, input.Content, author).Scan(&id, &createdAt)
 	if err != nil {
+		if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "23503" {
+			http.Error(w, "The referenced argument or parent comment does not exist", http.StatusBadRequest)
+			return
+		}
+
 		log.Printf("Database insert error: %v", err)
 		http.Error(w, "Failed to save comment", http.StatusInternalServerError)
 		return
@@ -217,32 +224,41 @@ func (a *App) handleCreateComment(w http.ResponseWriter, r *http.Request) {
 		notifContent := fmt.Sprintf("%s replied to your post", author)
 
 		err = a.DB.QueryRow(`INSERT INTO notif (argument_id, comment_id, user_id, type, content) VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at`, input.ArgumentID, id, ownerID, notifType, notifContent).Scan(&notifID, &notifCreatedAt)
+		if err != nil {
+			if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "23503" {
+				http.Error(w, "The referenced argument or parent comment does not exist", http.StatusBadRequest)
+				return
+			}
 
-		if err == nil {
-			a.hub.mu.Lock()
-			client, ok := a.hub.clients[ownerID]
-			a.hub.mu.Unlock()
+			log.Printf("Database insert error: %v", err)
+			http.Error(w, "Failed to save comment", http.StatusInternalServerError)
+			return
+		}
 
-			if ok {
-				notifMsg, _ := json.Marshal(map[string]interface{}{
-					"type": "NEW_NOTIFICATION",
-					"payload": map[string]interface{}{
-						"id":          notifID,
-						"argument_id": input.ArgumentID,
-						"comment_id":  id,
-						"type":        notifType,
-						"content":     notifContent,
-						"created_at":  notifCreatedAt.Format("2006-01-02 15:04:05"),
-						"is_read":     false,
-					},
-				})
-				select {
-				case client.send <- notifMsg:
-				default:
+		a.hub.mu.Lock()
+		client, ok := a.hub.clients[ownerID]
+		a.hub.mu.Unlock()
 
-				}
+		if ok {
+			notifMsg, _ := json.Marshal(map[string]interface{}{
+				"type": "NEW_NOTIFICATION",
+				"payload": map[string]interface{}{
+					"id":          notifID,
+					"argument_id": input.ArgumentID,
+					"comment_id":  id,
+					"type":        notifType,
+					"content":     notifContent,
+					"created_at":  notifCreatedAt.Format("2006-01-02 15:04:05"),
+					"is_read":     false,
+				},
+			})
+			select {
+			case client.send <- notifMsg:
+			default:
+
 			}
 		}
+
 	}
 
 	formattedTime := createdAt.Format("2006-01-02 15:04:05")
@@ -258,10 +274,14 @@ func (a *App) handleCreateComment(w http.ResponseWriter, r *http.Request) {
 		"replies":     []interface{}{},
 	}
 
-	msg, _ := json.Marshal(map[string]interface{}{
+	msg, err := json.Marshal(map[string]interface{}{
 		"type":    "NEW_COMMENT",
 		"payload": newComment,
 	})
+	if err != nil {
+		log.Printf("Failed to marshal ws message: %v", err)
+		return
+	}
 	a.hub.broadcast <- msg
 
 	w.WriteHeader(http.StatusCreated)
@@ -281,11 +301,6 @@ func (a *App) handleGetComments(w http.ResponseWriter, r *http.Request) {
 	}
 
 	argIDStr := r.URL.Query().Get("argument_id")
-	if argIDStr == "" {
-		http.Error(w, "Missing argument_id", http.StatusBadRequest)
-		return
-	}
-
 	argumentID, err := strconv.ParseInt(argIDStr, 10, 64)
 	if err != nil {
 		http.Error(w, "Invalid argument_id format", http.StatusBadRequest)
@@ -297,20 +312,23 @@ func (a *App) handleGetComments(w http.ResponseWriter, r *http.Request) {
 	if authHeader != "" {
 		parts := strings.SplitN(authHeader, " ", 2)
 		if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
-			if id, err := a.parseToken(parts[1]); err == nil {
-				currentUserID = int64(id)
+			if claims, err := a.parseToken(parts[1]); err == nil {
+				
+				if userIDFloat, ok := claims["user_id"].(float64); ok {
+					currentUserID =int64(userIDFloat)
+				}
 			}
 		}
 	}
 
-	query := `
-        SELECT c.id, c.content, c.user_id, c.argument_id, c.score, c.is_fire_triggered,
-               (SELECT COUNT(*) FROM comment_reactions cr WHERE cr.comment_id = c.id AND cr.reaction_type = 'fire') AS fire_count,
-               EXISTS(SELECT 1 FROM comment_reactions cr WHERE cr.comment_id = c.id AND cr.user_id = $2 AND cr.reaction_type = 'fire') AS user_has_fired
-        FROM comments c 
-        WHERE c.argument_id = $1
-        ORDER BY c.created_at ASC
-    `
+	query := `SELECT c.id, c.content, c.user_id, c.argument_id, c.score, c.is_fire_triggered, c.parent_id,
+	COUNT(cr.id) AS fire_count,
+	BOOL_OR(cr.user_id = $2 AND cr.reaction_type = 'fire') AS  user_has_fired
+	FROM comments c
+	LEFT JOIN comment_reactions cr ON cr.comment_id = c.id AND cr.reaction_type = 'fire'
+	WHERE c.argument_id = $1
+	GROUP BY c.id
+	ORDER BY c.created_at ASC`
 
 	rows, err := a.DB.Query(query, argumentID, currentUserID)
 	if err != nil {
@@ -326,6 +344,7 @@ func (a *App) handleGetComments(w http.ResponseWriter, r *http.Request) {
 		ArgumentID      int64  `json:"argument_id"`
 		Score           int    `json:"score"`
 		IsFireTriggered bool   `json:"is_fire_triggered"`
+		ParentID        *int64 `json:"parent_id"`
 		FireCount       int64  `json:"fire_count"`
 		UserHasFired    bool   `json:"user_has_fired"`
 	}
@@ -333,14 +352,16 @@ func (a *App) handleGetComments(w http.ResponseWriter, r *http.Request) {
 	var comments []CommentResponse
 	for rows.Next() {
 		var c CommentResponse
-		if err := rows.Scan(&c.ID, &c.Content, &c.UserID, &c.ArgumentID, &c.Score, &c.IsFireTriggered, &c.FireCount, &c.UserHasFired); err != nil {
-			continue
+		if err := rows.Scan(&c.ID, &c.Content, &c.UserID, &c.ArgumentID, &c.Score, &c.IsFireTriggered, &c.ParentID, &c.FireCount, &c.UserHasFired); err != nil {
+			http.Error(w, "Error scanning comment row", http.StatusInternalServerError)
+			return
 		}
 		comments = append(comments, c)
 	}
 
 	if err := rows.Err(); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Error iterating comment rows", http.StatusInternalServerError)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")

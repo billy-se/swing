@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Argument } from './types';
 import { PrimaryCommentInput, CommentFunc } from './comments';
+import { getValidToken } from './auth';
 
 interface ReviewModalProps {
     isReviewOpen: boolean;
@@ -20,6 +21,7 @@ interface ReviewModalProps {
 }
 
 export function ReviewModal({ isReviewOpen, selectedArgument, targetCommentId, setIsReviewOpen, handleAddReply }: ReviewModalProps) {
+
     if (!isReviewOpen || !selectedArgument) return null;
 
     return (

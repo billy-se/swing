@@ -46,3 +46,10 @@ export interface RawComment {
     replies?: RawComment[];
     comments?: RawComment[];
 }
+
+export interface UserProfile  {
+    id: number | null;
+    username: string;
+    role: string | null;
+    logicScore: number;
+}
