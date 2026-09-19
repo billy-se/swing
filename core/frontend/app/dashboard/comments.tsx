@@ -7,7 +7,6 @@ interface CommentFuncProps {
     processedComment: Comment;
     argumentId: string | number;
     targetCommentId?: string | number | null;
-    isViewer?: boolean;
     onAddReply: (
         commentId: string, 
         savedComment: { 
@@ -19,16 +18,16 @@ interface CommentFuncProps {
         }) => void;
 }
 
-export function CommentFunc({ processedComment, argumentId, targetCommentId, isViewer = false, onAddReply }: CommentFuncProps) {
+export function CommentFunc({ processedComment, argumentId, targetCommentId, onAddReply }: CommentFuncProps) {
     const [isReplying, setIsReplying] = useState(false);
     const [replyText, setReplyText] = useState("");
     const [isLoggedIn, setIsLoggedIn] = useState(false);
+    const [isViewer, setIsViewer] = useState(false);
     const [currentUserId, setCurrentUserId] = useState<number | null>(null);
     const [currentUsername, setCurrentUsername] = useState<string>("");
     const [isCollapsed, setIsCollapsed] = useState(true);
     
     const [fireCount, setFireCount] = useState(processedComment.fire_count || processedComment.score || 0); 
-
     const [isHighlighted, setIsHighlighted] = useState(false);
 
     useEffect(() => {
@@ -63,6 +62,11 @@ export function CommentFunc({ processedComment, argumentId, targetCommentId, isV
     }, [targetCommentId, processedComment]);
 
     useEffect(() => {
+        const sessionRole = sessionStorage.getItem('user_role') || localStorage.getItem('user_role');
+        if (sessionRole === 'viewer') {
+            setIsViewer(true);
+        }
+
         const token = getValidToken();
 
         if (token && token !== 'null' && token !== 'undefined') {
@@ -72,6 +76,10 @@ export function CommentFunc({ processedComment, argumentId, targetCommentId, isV
                 const tokenPayload = JSON.parse(atob(token.split('.')[1]));
                 setCurrentUserId(tokenPayload.user_id || tokenPayload.id);
                 setCurrentUsername(tokenPayload.username || tokenPayload.author || "");
+                
+                if (tokenPayload.role === 'viewer') {
+                    setIsViewer(true);
+                }
             } catch (error) {
                 console.error("Failed to parse user token:", error);
             }
@@ -191,7 +199,6 @@ export function CommentFunc({ processedComment, argumentId, targetCommentId, isV
                             processedComment={replyItem} 
                             argumentId={argumentId} 
                             targetCommentId={targetCommentId}
-                            isViewer={isViewer} 
                             onAddReply={onAddReply} 
                         />
                     ))}
@@ -203,17 +210,22 @@ export function CommentFunc({ processedComment, argumentId, targetCommentId, isV
 
 interface PrimaryCommentInputProps {
     argumentId: string | number;
-    isViewer?: boolean;
     onAddReply: (commentId: string, savedComment: { id: number; content: string; created_at: string; user_id?: number; author?: string }) => void;
 }
 
-export function PrimaryCommentInput({ argumentId, isViewer = false, onAddReply }: PrimaryCommentInputProps) {
+export function PrimaryCommentInput({ argumentId, onAddReply }: PrimaryCommentInputProps) {
     const [primaryText, setPrimaryText] = useState("");
     const [isLoggedIn, setIsLoggedIn] = useState(false);
+    const [isViewer, setIsViewer] = useState(false);
     const [currentUserId, setCurrentUserId] = useState<number | null>(null);
     const [currentUsername, setCurrentUsername] = useState<string>("");
 
     useEffect(() => {
+        const sessionRole = sessionStorage.getItem('user_role') || localStorage.getItem('user_role');
+        if (sessionRole === 'viewer') {
+            setIsViewer(true);
+        }
+
         const token = getValidToken();
 
         if (token && token !== 'null' && token !== 'undefined') {
@@ -223,6 +235,10 @@ export function PrimaryCommentInput({ argumentId, isViewer = false, onAddReply }
                 const tokenPayload = JSON.parse(atob(token.split('.')[1]));
                 setCurrentUserId(tokenPayload.user_id || tokenPayload.id);
                 setCurrentUsername(tokenPayload.username || tokenPayload.author || "");
+                
+                if (tokenPayload.role === 'viewer') {
+                    setIsViewer(true);
+                }
             } catch (error) {
                 console.error("Failed to parse user token:", error);
             }

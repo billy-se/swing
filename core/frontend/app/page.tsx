@@ -125,6 +125,27 @@ export default function AuthPage() {
     }
   }
 
+  /*useEffect(() => {
+    const fetchViewerSession = async() => {
+      try {
+        const response = await api.get('/api/auth/me');
+
+        setUser({
+          id: response.data.id || null,
+          username: response.data.username,
+          role: response.data.role || 'viewer',
+          logicScore: response.data.logicScore || 0
+        });
+      } catch (error) {
+        setUser({ id: null, username: 'GUEST', role: 'viewer', logicScore: 0 });
+      }
+    }
+
+    if (!user || user.username === 'GUEST') {
+      fetchViewerSession();
+    }
+  }, []);*/
+
   const handleViewerMode = async (formSubmitEvent: React.SyntheticEvent) => {
     formSubmitEvent.preventDefault();
     setSuccessId(null);
@@ -134,14 +155,18 @@ export default function AuthPage() {
     setLoading(true);
     try {
       const response = await api.post('/api/viewer');
-      setMemoryAccessToken(response.data.access_token);
+      
+      const randomUsername = response.data.username;
 
-      setUser({
+      sessionStorage.setItem('viewer_username', randomUsername)
+      sessionStorage.setItem('user_role', 'viewer');
+
+      /*setUser({
         id: null,
-        username: response.data.username,
-        role: response.data.role || 'viewer',
+        username: randomUsername,
+        role: 'viewer',
         logicScore: 0
-      });
+      });*/
 
       router.push('/dashboard');
     } catch (error: any){

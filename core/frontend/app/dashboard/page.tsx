@@ -88,6 +88,8 @@ export default function Home() {
         } catch (err) {
             console.error("Failed to logout on backend", err);
         } finally {
+            sessionStorage.removeItem('viewer_username');
+            sessionStorage.removeItem('user_role');
             setMemoryAccessToken('');
             
             setUser(null);
@@ -109,8 +111,21 @@ export default function Home() {
         loadArguments();
 
         const initializeConnection = async () => {
+            const sessionViewerName = sessionStorage.getItem('viewer_username');
+            const sessionRole = sessionStorage.getItem('user_role');
+
+            let fetchedRole = 'user';
             let token = getMemoryAccessToken();
 
+            if (sessionRole === 'viewer' && sessionViewerName) {
+                setUser({
+                    id: null,
+                    username: sessionViewerName,
+                    role: 'viewer',
+                    logicScore: 0
+                });
+                fetchedRole = 'viewer';
+            } else {
             if (!token) {
                 try {
                     const refreshRes = await api.post('/api/refresh');
@@ -121,8 +136,6 @@ export default function Home() {
                 }
             }
 
-            let fetchedRole = 'user';
-
             if (token) {
                 try {
                     const res = await api.get('/api/user/profile');
@@ -131,18 +144,7 @@ export default function Home() {
                     if (data.role) {
                         fetchedRole = data.role;
                     }
-
-                    if (fetchedRole === 'viewer') {
-                        setUser({
-                            id: data.id || data.user_id || null,
-                            username: data.username || data.name,
-                            role: 'viewer',
-                            logicScore: data.logic_score ?? 0
-                        });
-                        console.log("Viewer session detected on reload. Skipping notifications and WebSocket.");
-                        return;
-                    }
-
+                    
                     setUser({
                         id: data.id || data.user_id || null,
                         username: data.username || 'ANONYMOUS',
@@ -150,7 +152,9 @@ export default function Home() {
                         logicScore: data.logic_score ?? 0
                     });
 
-                    loadNotifications();
+                    if (fetchedRole !== 'viewer'){
+                        loadNotifications();
+                    }
                 } catch (err) {
                     console.error("Failed to load profile", err);
                     setUser(null);
@@ -159,12 +163,14 @@ export default function Home() {
                 setUser(null);
             }
 
-            if (!token || fetchedRole === 'viewer') {
+            }
+
+            if (fetchedRole === 'viewer' || !token) {
                 return;
             }
 
             try {
-                const wsBaseUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:2026';
+                const wsBaseUrl = process.env.NEXT_PUBLIC_WS_URL;
                 const ticketRes = await api.post('/api/ws-ticket');
                 const ticket = ticketRes.data.ticket;
                 const wsUrl = `${wsBaseUrl}/ws?ticket=${ticket}`;
@@ -371,89 +377,90 @@ export default function Home() {
     };
 
     return (
-        <main className="min-h-screen bg-black text-zinc-100 font-mono p-6 md:p-12 flex justify-center">
-            <div className="w-full max-w-6xl flex flex-col gap-6">
+    <main className="h-[100dvh] w-full bg-black text-zinc-100 font-mono p-6 md:p-12 flex justify-center overflow-hidden box-border">
+        <div className="w-full max-w-6xl flex flex-col gap-4 h-[calc(100dvh-3rem)] md:h-[calc(100dvh-6rem)] overflow-hidden box-border">
 
-                <header className="bg-zinc-950 border border-zinc-800 rounded-lg p-4 md:p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                    <div className="flex items-center gap-3">
-                        <div>
-                            <h1 className="text-sm font-semibold tracking-widest uppercase text-zinc-200">
-                                {currentUsername}
-                            </h1>
-                            <p className="text-[10px] text-zinc-500">Username</p>
-                        </div>
+            <header className="bg-zinc-950 border border-zinc-800 rounded-lg p-4 md:p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 shrink-0">
+                <div className="flex items-center gap-3">
+                    <div>
+                        <h1 className="text-sm font-semibold tracking-widest uppercase text-zinc-200">
+                            {currentUsername}
+                        </h1>
+                        <p className="text-[10px] text-zinc-500">Username</p>
                     </div>
+                </div>
 
-                    <div className="flex items-center gap-6 text-xs border-t sm:border-t-0 border-zinc-800 pt-3 sm:pt-0 w-full sm:w-auto justify-between sm:justify-end">
-                        {!isViewer && isLoggedIn && (
-                        <div
-                            ref={notificationRef}
-                            onClick={() => setIsNotificationOpen(!isNotificationOpen)}
-                            className="cursor-pointer transition-opacity select-none relative hover:opacity-80"
-                        >
-                            <span className="text-zinc-500 block text-[10px]">NOTIFICATION</span>
-                            {(() => {
-                                const unreadCount = notifications.filter(n => !n.is_read).length;
-                                return (
-                                    <span className={`font-bold ${unreadCount > 0 ? 'text-emerald-400' : 'text-red-500'}`}>
-                                        {unreadCount} 🐌
-                                    </span>
-                                );
-                            })()}
+                <div className="flex items-center gap-6 text-xs border-t sm:border-t-0 border-zinc-800 pt-3 sm:pt-0 w-full sm:w-auto justify-between sm:justify-end">
+                    {!isViewer && isLoggedIn && (
+                    <div
+                        ref={notificationRef}
+                        onClick={() => setIsNotificationOpen(!isNotificationOpen)}
+                        className="cursor-pointer transition-opacity select-none relative hover:opacity-80"
+                    >
+                        <span className="text-zinc-500 block text-[10px]">NOTIFICATION</span>
+                        {(() => {
+                            const unreadCount = notifications.filter(n => !n.is_read).length;
+                            return (
+                                <span className={`font-bold ${unreadCount > 0 ? 'text-emerald-400' : 'text-red-500'}`}>
+                                    {unreadCount} 🐌
+                                </span>
+                            );
+                        })()}
 
-                            {isNotificationOpen && (
-                                <div className="absolute right-0 mt-2 w-64 bg-zinc-900 border border-zinc-800 rounded shadow-lg p-2 z-50 max-h-64 overflow-y-auto">
-                                    {notifications.length > 0 ? (
-                                        notifications.map((notif) => (
-                                            <div
-                                                key={notif.id}
-                                                onClick={async () => {
-                                                    if (!notif.is_read && notif.id !== undefined && notif.id !== null) {
-                                                        await markNotificationAsRead(Number(notif.id));
-                                                        setNotifications(prev =>
-                                                            prev.map(n => n.id === notif.id ? { ...n, is_read: true } : n)
-                                                        );
-                                                    }
+                        {isNotificationOpen && (
+                            <div className="absolute right-0 mt-2 w-64 bg-zinc-900 border border-zinc-800 rounded shadow-lg p-2 z-50 max-h-64 overflow-y-auto">
+                                {notifications.length > 0 ? (
+                                    notifications.map((notif) => (
+                                        <div
+                                            key={notif.id}
+                                            onClick={async () => {
+                                                if (!notif.is_read && notif.id !== undefined && notif.id !== null) {
+                                                    await markNotificationAsRead(Number(notif.id));
+                                                    setNotifications(prev =>
+                                                        prev.map(n => n.id === notif.id ? { ...n, is_read: true } : n)
+                                                    );
+                                                }
 
-                                                    if (notif.argument_id !== undefined && notif.argument_id !== null) {
-                                                        setSelectedArgumentId(Number(notif.argument_id));
-                                                        setTargetCommentId(notif.comment_id || null);
-                                                        setIsReviewOpen(true);
-                                                        setIsNotificationOpen(false);
-                                                    }
-                                                }}
-                                                className={`text-[11px] py-2 px-2 border-b border-zinc-800 last:border-0 cursor-pointer transition-colors ${notif.is_read ? 'text-zinc-400 bg-transparent' : 'text-zinc-100 bg-zinc-800 font-semibold'}`}
-                                            >
-                                                <p>{notif.content}</p>
-                                                <span className="text-[9px] text-zinc-500 block mt-0.5">{notif.created_at || "Just now"}</span>
-                                            </div>
-                                        ))
-                                    ) : (
-                                        <div className="text-zinc-500 text-[11px] py-1 text-center">No new notifications</div>
-                                    )}
-                                </div>
-                            )}
-                        </div>
-                        )}
-                        
-                        <div>
-                            <span className="text-zinc-500 block text-[10px]">LOGIC SCORE</span>
-                            <span className="text-emerald-400 font-bold">{logicScore}</span>
-                        </div>
-                    </div>
-                </header>
-                
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    <div className="lg:col-span-2 flex flex-col gap-4">
-                        <div className="flex justify-between items-center bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-xs text-zinc-400">
-                            <span className="text-zinc-200 font-bold tracking-wider px-1">ACTIVE DEBATES</span>
-                            <div className="flex gap-10 bg-zinc-900/60 p-1 rounded-lg border border-zinc-800">
-                                <button className="text-emerald-400 hover:underline">Recent</button>
-                                <button className="hover:text-zinc-200">Top</button>
-                                <button className="text-zinc-400 hover:text-zinc-200">WatchList</button>
+                                                if (notif.argument_id !== undefined && notif.argument_id !== null) {
+                                                    setSelectedArgumentId(Number(notif.argument_id));
+                                                    setTargetCommentId(notif.comment_id || null);
+                                                    setIsReviewOpen(true);
+                                                    setIsNotificationOpen(false);
+                                                }
+                                            }}
+                                            className={`text-[11px] py-2 px-2 border-b border-zinc-800 last:border-0 cursor-pointer transition-colors ${notif.is_read ? 'text-zinc-400 bg-transparent' : 'text-zinc-100 bg-zinc-800 font-semibold'}`}
+                                        >
+                                            <p>{notif.content}</p>
+                                            <span className="text-[9px] text-zinc-500 block mt-0.5">{notif.created_at || "Just now"}</span>
+                                        </div>
+                                    ))
+                                ) : (
+                                    <div className="text-zinc-500 text-[11px] py-1 text-center">No new notifications</div>
+                                )}
                             </div>
+                        )}
+                    </div>
+                    )}
+                    
+                    <div>
+                        <span className="text-zinc-500 block text-[10px]">LOGIC SCORE</span>
+                        <span className="text-emerald-400 font-bold">{logicScore}</span>
+                    </div>
+                </div>
+            </header>
+            
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-0 overflow-hidden">
+                <div className="lg:col-span-2 flex flex-col gap-4 h-full min-h-0">
+                    <div className="flex justify-between items-center bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-xs text-zinc-400 shrink-0">
+                        <span className="text-zinc-200 font-bold tracking-wider px-1">ACTIVE DEBATES</span>
+                        <div className="flex gap-10 bg-zinc-900/60 p-1 rounded-lg border border-zinc-800">
+                            <button className="text-emerald-400 hover:underline">Recent</button>
+                            <button className="hover:text-zinc-200">Top</button>
+                            <button className="text-zinc-400 hover:text-zinc-200">WatchList</button>
                         </div>
+                    </div>
 
+                    <div className="flex-1 min-h-0 overflow-y-auto space-y-4 pr-2 pb-6 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
                         {(argumentsList || []).map((check) => (
                             <div key={check.id} className="bg-zinc-950 border border-zinc-800 rounded-lg p-5 flex flex-col gap-4 hover:border-zinc-700 transition-colors">
                                 <div className="flex justify-between items-center text-[10px] text-zinc-500">
@@ -480,77 +487,78 @@ export default function Home() {
                             </div>
                         ))}
                     </div>
+                </div>
 
-                    <div className="flex flex-col gap-6">
-                        {isLoggedIn && !isViewer && (
-                            <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-5 flex flex-col gap-4">
-                                <h2 className="text-xs font-bold tracking-wider uppercase text-zinc-200">
-                                    SUBMIT FOR REVIEW
-                                </h2>
-                                <p className="text-xs text-zinc-500">
-                                    Submit a code proposal, paper, or architectural argument to the blind review pool.
-                                </p>
-                                <button className="w-full bg-emerald-600 hover:bg-emerald-500 text-black font-semibold py-2 rounded text-xs transition-colors"
-                                    onClick={() => setIsCreateOpen(true)}>
-                                    Create an Argument
-                                </button>
-                            </div>
-                        )}
-
-                        <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-5 flex flex-col gap-3">
+                <div className="flex flex-col gap-6 h-full min-h-0 overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+                    {isLoggedIn && !isViewer && (
+                        <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-5 flex flex-col gap-4 shrink-0">
                             <h2 className="text-xs font-bold tracking-wider uppercase text-zinc-200">
-                                Stats:
+                                SUBMIT FOR REVIEW
                             </h2>
-                            <div className="flex flex-col gap-2 text-xs text-zinc-400">
-                                <div className="flex justify-between">
-                                    <span>Peer Reviews Given:</span>
-                                    <span className="text-zinc-200">14</span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span>Logic Consensus Rate:</span>
-                                    <span className="text-emerald-400">89%</span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span>Anonymity Integrity:</span>
-                                    <span className="text-blue-400">Secure</span>
-                                </div>
+                            <p className="text-xs text-zinc-500">
+                                Submit a code proposal, paper, or architectural argument to the blind review pool.
+                            </p>
+                            <button className="w-full bg-emerald-600 hover:bg-emerald-500 text-black font-semibold py-2 rounded text-xs transition-colors"
+                                onClick={() => setIsCreateOpen(true)}>
+                                Create an Argument
+                            </button>
+                        </div>
+                    )}
+
+                    <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-5 flex flex-col gap-3 shrink-0">
+                        <h2 className="text-xs font-bold tracking-wider uppercase text-zinc-200">
+                            Stats:
+                        </h2>
+                        <div className="flex flex-col gap-2 text-xs text-zinc-400">
+                            <div className="flex justify-between">
+                                <span>Peer Reviews Given:</span>
+                                <span className="text-zinc-200">14</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span>Logic Consensus Rate:</span>
+                                <span className="text-emerald-400">89%</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span>Anonymity Integrity:</span>
+                                <span className="text-blue-400">Secure</span>
                             </div>
                         </div>
                     </div>
+
+                    {!isViewer && isLoggedIn && (
+                        <div className="flex items-center gap-4 shrink-0">
+                            <button 
+                                onClick={handleLogout}
+                                className="bg-zinc-900 hover:bg-zinc-800 text-red-400 hover:text-red-300 px-3 py-1 rounded border border-zinc-800 transition-colors"
+                            >
+                                Logout
+                            </button>
+                        </div>
+                    )}
                 </div>
-                
-                <ReviewModal
-                    isReviewOpen={isReviewOpen}
-                    selectedArgument={selectedArgument}
-                    targetCommentId={targetCommentId}
-                    setIsReviewOpen={setIsReviewOpen}
-                    handleAddReply={handleAddReply}
-                />
-
-                {isLoggedIn && !isViewer && (
-                    <CreateArgumentModal
-                        isCreateOpen={isCreateOpen}
-                        error={error}
-                        newTitle={newTitle}
-                        newContent={newContent}
-                        setNewTitle={setNewTitle}
-                        setNewContent={setNewContent}
-                        setIsCreateOpen={setIsCreateOpen}
-                        onSubmit={handleCreateSubmit}
-                    />
-                )}
-
-                {!isViewer && isLoggedIn && (
-                    <div className="flex items-center gap-4">
-                        <button 
-                            onClick={handleLogout}
-                            className="bg-zinc-900 hover:bg-zinc-800 text-red-400 hover:text-red-300 px-3 py-1 rounded border border-zinc-800 transition-colors"
-                        >
-                            Logout
-                        </button>
-                    </div>
-                )}
             </div>
-        </main>
-    );
+            
+            <ReviewModal
+                isReviewOpen={isReviewOpen}
+                selectedArgument={selectedArgument}
+                targetCommentId={targetCommentId}
+                setIsReviewOpen={setIsReviewOpen}
+                handleAddReply={handleAddReply}
+            />
+
+            {isLoggedIn && !isViewer && (
+                <CreateArgumentModal
+                    isCreateOpen={isCreateOpen}
+                    error={error}
+                    newTitle={newTitle}
+                    newContent={newContent}
+                    setNewTitle={setNewTitle}
+                    setNewContent={setNewContent}
+                    setIsCreateOpen={setIsCreateOpen}
+                    onSubmit={handleCreateSubmit}
+                />
+            )}
+        </div>
+    </main>
+);
 }
