@@ -10,6 +10,7 @@ import (
 	"vaine-backend/config"
 	"vaine-backend/db"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 )
@@ -64,12 +65,32 @@ func main() {
 	mux.HandleFunc("GET /api/user/profile", app.authMiddleware(app.handleGetProfile))
 
 	mux.HandleFunc("GET /api/auth/me", app.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		claims, ok := r.Context().Value(claimsKey).(jwt.MapClaims)
+		if !ok {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		role, _ := claims["role"].(string)
+
+		if role == "viewer" {
+			username, _ := claims["username"].(string)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"id":       0,
+				"username": username,
+				"role":     "viewer",
+			})
+			return
+		}
+
 		userID := r.Context().Value(userIDKey).(int)
 
 		var id int
 		var username string
+		var dbRole string
 
-		err := app.DB.QueryRow("SELECT id, username FROM users WHERE id = $1", userID).Scan(&id, &username)
+		err := app.DB.QueryRow("SELECT id, username, role FROM users WHERE id = $1", userID).Scan(&id, &username, &dbRole)
 		if err != nil {
 			if err == sql.ErrNoRows {
 				http.Error(w, "User not found", http.StatusNotFound)
@@ -82,6 +103,7 @@ func main() {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"id":       id,
 			"username": username,
+			"role":     dbRole,
 		})
 	}))
 
@@ -89,6 +111,8 @@ func main() {
 	mux.HandleFunc("PATCH /api/notifications/{id}/read", app.authMiddleware(app.handleMarkNotificationRead))
 
 	mux.HandleFunc("POST /api/ws-ticket", app.authMiddleware(app.handleGenerateWSTicket))
+
+	mux.HandleFunc("POST /api/logout", app.handleLogout)
 
 	handler := EnableCORS(mux)
 

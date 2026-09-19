@@ -312,8 +312,11 @@ func (a *App) handleGetComments(w http.ResponseWriter, r *http.Request) {
 	if authHeader != "" {
 		parts := strings.SplitN(authHeader, " ", 2)
 		if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
-			if id, err := a.parseToken(parts[1]); err == nil {
-				currentUserID = int64(id)
+			if claims, err := a.parseToken(parts[1]); err == nil {
+				
+				if userIDFloat, ok := claims["user_id"].(float64); ok {
+					currentUserID =int64(userIDFloat)
+				}
 			}
 		}
 	}

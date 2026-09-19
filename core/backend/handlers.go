@@ -23,6 +23,7 @@ import (
 type contextKey string
 
 const userIDKey contextKey = "user_id"
+const claimsKey contextKey = "claims"
 
 //var jwtSecret = []byte(os.Getenv("JWTSECRET"))
 
@@ -41,15 +42,19 @@ func (a *App) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		tokenString := parts[1]
-
-		userID, err := a.parseToken(tokenString)
+		claims, err := a.parseToken(parts[1])
 		if err != nil {
 			http.Error(w, "Invalid or expired token", http.StatusUnauthorized)
 			return
 		}
 
+		var userID int
+		if userIDFloat, ok := claims["user_id"].(float64); ok {
+			userID = int(userIDFloat)
+		}
+
 		ctx := context.WithValue(r.Context(), userIDKey, userID)
+		ctx = context.WithValue(ctx, claimsKey, claims)
 		next(w, r.WithContext(ctx))
 	}
 }
@@ -69,10 +74,10 @@ func (a *App) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return token.SignedString([]byte(secret))
 }*/
 
-func (a *App) parseToken(tokenString string) (int, error) {
+func (a *App) parseToken(tokenString string) (jwt.MapClaims, error) {
 	jwtParseSigningKey := os.Getenv("JWT_ACCESS")
 	if jwtParseSigningKey == "" {
-		return 0, errors.New("[parseToken]: JWT_ACCESS environment variable is missing")
+		return nil, errors.New("[parseToken]: JWT_ACCESS environment variable is missing")
 	}
 
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
@@ -83,20 +88,20 @@ func (a *App) parseToken(tokenString string) (int, error) {
 	})
 	if err != nil {
 		fmt.Println("[parseToken]: JWT Parse Error Details:", err)
-		return 0, err
+		return nil, err
 	}
 	if !token.Valid {
-		return 0, fmt.Errorf("invalid or expired token")
+		return nil, fmt.Errorf("invalid or expired token")
 	}
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if !ok {
-		return 0, fmt.Errorf("invalid token claims")
+		return nil, fmt.Errorf("invalid token claims")
 	}
-	userIDFloat, ok := claims["user_id"].(float64)
+	/*userIDFloat, ok := claims["user_id"].(float64)
 	if !ok {
-		return 0, fmt.Errorf("invalid user ID in token")
-	}
-	return int(userIDFloat), nil
+		return nil, fmt.Errorf("invalid user ID in token")
+	}*/
+	return claims, nil
 }
 
 func generateAccessToken(userID int) (string, error) {
@@ -140,7 +145,7 @@ func (a *App) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	cookie, err := r.Cookie("refresh_token_swing")
 	if err != nil {
 		if err == http.ErrNoCookie {
-			http.Error(w, "Unauthorized: No refresh token cookie", http.StatusUnauthorized)
+			http.Error(w, "[handleRefresh]: Unauthorized: No refresh token cookie", http.StatusUnauthorized)
 			return
 		}
 		http.Error(w, "Bad Request", http.StatusBadRequest)
@@ -213,7 +218,7 @@ func (a *App) handleGenerateWSTicket(w http.ResponseWriter, r *http.Request) {
 
 	userID, ok := r.Context().Value(userIDKey).(int)
 	if !ok {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		http.Error(w, "[handleGenerateWSTicket]: Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -248,11 +253,17 @@ func (a *App) handleRefreshToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, err := a.parseToken(cookie.Value)
+	claims, err := a.parseToken(cookie.Value)
 	if err != nil {
 		http.Error(w, "Invalid or expired refresh token", http.StatusUnauthorized)
 		return
 	}
+
+	userIDFloat, ok := claims["user_id"].(float64)
+	if !ok {
+		http.Error(w, "Invalid user ID in the token claims", http.StatusUnauthorized)
+	}
+	userID := int(userIDFloat)
 
 	newAccessToken, err := generateAccessToken(userID)
 	if err != nil {
@@ -302,11 +313,25 @@ func (a *App) handleGetProfile(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("DEBUG: handleGetProfile was hit! userId =", r.Context().Value(userIDKey))
 	userId := r.Context().Value(userIDKey)
 
+	claims, _ := r.Context().Value(claimsKey).(jwt.MapClaims)
+
+	var contextUsername string
+	if claims != nil {
+		if uname, ok := claims["username"].(string); ok {
+			contextUsername = uname
+		}
+	}
+
 	if userId == nil || userId == 0 {
+		usernameToUse := "VIEWER"
+		if contextUsername != "" {
+			usernameToUse = contextUsername
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
 			"id":          0,
-			"username":    "VIEWER",
+			"username":    usernameToUse,
 			"logic_score": 0,
 			"role":        "viewer",
 		})
@@ -743,7 +768,7 @@ func (a *App) handleViewerMode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method != http.MethodPost {
-		http.Error(w, "Only Post is alloewd", http.StatusMethodNotAllowed)
+		http.Error(w, "Only Post is allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -790,4 +815,25 @@ func generateViewerAccessToken(username string) (string, error) {
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString([]byte(jwtAccessSigningKey))
+}
+
+func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "refresh_token_swing",
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   false,
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"message": "Logged out successfully"})
 }

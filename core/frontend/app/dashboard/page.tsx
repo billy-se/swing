@@ -1,11 +1,11 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { Comment, Argument, NotificationItem, RawComment } from './types';
+import { Comment, Argument, NotificationItem, RawComment, UserProfile } from './types';
 import { ReviewModal } from './reviewModal';
 import { CreateArgumentModal } from './createModal';
-import { getValidToken } from './auth';
 import { api, setMemoryAccessToken, getMemoryAccessToken } from '@/app/dashboard/api';
+import { useRouter } from 'next/navigation';
 
 export default function Home() {
     const [isReviewOpen, setIsReviewOpen] = useState(false);
@@ -16,11 +16,9 @@ export default function Home() {
 
     const [newTitle, setNewTitle] = useState("");
     const [newContent, setNewContent] = useState("");
-
     const [error, setError] = useState('');
-    const [isLoggedIn, setIsLoggedIn] = useState(false);
-    const [currentUsername, setCurrentUsername] = useState('GUEST');
-    const [logicScore, setLogicScore] = useState(0);
+
+    const [user, setUser] = useState<UserProfile | null>(null);
 
     const ws = useRef<WebSocket | null>(null);
 
@@ -28,8 +26,7 @@ export default function Home() {
     const [isNotificationOpen, setIsNotificationOpen] = useState(false);
     const notificationRef = useRef<HTMLDivElement>(null);
 
-    const [currentUserId, setCurrentUserId] = useState<number | null>(null);
-    const [userRole, setUserRole] = useState<string>('user');
+    const router = useRouter();
 
     const mapComments = (commentsList: RawComment[]): Comment[] => {
         if (!Array.isArray(commentsList)) return [];
@@ -77,7 +74,6 @@ export default function Home() {
     const markNotificationAsRead = async (notificationId: number) => {
         try {
             await api.patch(`/api/notifications/${notificationId}/read`);
-
             setNotifications(currentNotif =>
                 currentNotif.map(notif => notif.id === notificationId ? { ...notif, is_read: true } : notif)
             );
@@ -86,11 +82,31 @@ export default function Home() {
         }
     };
 
+    const handleLogout = async () => {
+        try {
+            await api.post('/api/logout');
+        } catch (err) {
+            console.error("Failed to logout on backend", err);
+        } finally {
+            setMemoryAccessToken('');
+            
+            setUser(null);
+            
+            setNotifications([]);
+            setIsNotificationOpen(false);
+            
+            console.log("Session cleared. User is now a guest.");
+            router.push('/');
+        }
+    };
+
     useEffect(() => {
         if (ws.current && (ws.current.readyState === WebSocket.OPEN || ws.current.readyState === WebSocket.CONNECTING)) return;
 
         let socket: WebSocket | null = null;
         let isMounted = true;
+
+        loadArguments();
 
         const initializeConnection = async () => {
             let token = getMemoryAccessToken();
@@ -105,38 +121,42 @@ export default function Home() {
                 }
             }
 
-            loadArguments();
-
             let fetchedRole = 'user';
 
             if (token) {
-                setIsLoggedIn(true);
                 try {
                     const res = await api.get('/api/user/profile');
                     const data = res.data;
                     
                     if (data.role) {
-                        setUserRole(data.role);
                         fetchedRole = data.role;
                     }
 
-                    if (data.role === 'viewer') {
-                        setCurrentUsername('VIEWER');
+                    if (fetchedRole === 'viewer') {
+                        setUser({
+                            id: data.id || data.user_id || null,
+                            username: data.username || data.name,
+                            role: 'viewer',
+                            logicScore: data.logic_score ?? 0
+                        });
                         console.log("Viewer session detected on reload. Skipping notifications and WebSocket.");
                         return;
                     }
 
-                    if (data.username) setCurrentUsername(data.username);
-                    if (data.logic_score !== undefined) setLogicScore(data.logic_score);
-                    if (data.id || data.user_id) setCurrentUserId(data.id || data.user_id);
+                    setUser({
+                        id: data.id || data.user_id || null,
+                        username: data.username || 'ANONYMOUS',
+                        role: fetchedRole,
+                        logicScore: data.logic_score ?? 0
+                    });
 
                     loadNotifications();
                 } catch (err) {
                     console.error("Failed to load profile", err);
+                    setUser(null);
                 }
             } else {
-                setIsLoggedIn(false);
-                setCurrentUsername('GUEST');
+                setUser(null);
             }
 
             if (!token || fetchedRole === 'viewer') {
@@ -151,21 +171,8 @@ export default function Home() {
 
                 if (!isMounted) return;
 
-                console.log("Attempting to connect to:", wsUrl);
                 socket = new WebSocket(wsUrl);
                 ws.current = socket;
-
-                socket.onopen = () => {
-                    console.log("WebSocket successfully connected via ticket!");
-                };
-
-                socket.onerror = (error) => {
-                    console.error("WebSocket error occurred:", error);
-                };
-
-                socket.onclose = (event) => {
-                    console.log("WebSocket closed:", event.reason);
-                };
 
                 socket.onmessage = (fromServerJson) => {
                     const messageJson = JSON.parse(fromServerJson.data);
@@ -203,7 +210,6 @@ export default function Home() {
                                     if (commentItem.replies?.some(existingReply => existingReply.id === incomingComment.id)) return commentItem;
                                     return { ...commentItem, replies: [incomingComment, ...(commentItem.replies || [])] };
                                 }
-
                                 if (commentItem.replies && commentItem.replies.length > 0) {
                                     return { ...commentItem, replies: addReplyRecursive(commentItem.replies) };
                                 }
@@ -215,7 +221,6 @@ export default function Home() {
                             return existingArguments.map(argumentItem => {
                                 if (String(argumentItem.id) === argumentId) {
                                     const existingComments = argumentItem.comments || [];
-
                                     if (parentCommentId == null || parentCommentId === undefined || parentCommentId === "root-id") {
                                         if (existingComments.some(commentItem => commentItem.id === incomingComment.id)) return argumentItem;
                                         return { ...argumentItem, comments: [incomingComment, ...existingComments] };
@@ -230,24 +235,19 @@ export default function Home() {
                         const targetCommentId = String(messagePayload.comment_id || messagePayload.commentId || messagePayload.id);
                         const commentUserId = messagePayload.user_id;
 
-                        const activeUserId = currentUserId;
-
                         const updateFireRecursive = (existingComments: Comment[]): Comment[] => {
                             return existingComments.map(commentItem => {
                                 if (commentItem.id === targetCommentId) {
-                                    const isCurrentUsersFire = commentUserId && Number(commentUserId) === Number(activeUserId);
-
+                                    const isCurrentUsersFire = commentUserId && user?.id && Number(commentUserId) === Number(user.id);
                                     return {
                                         ...commentItem,
                                         fire_count: messagePayload.fire_count !== undefined ? messagePayload.fire_count : commentItem.fire_count,
                                         user_has_fired: isCurrentUsersFire ? !commentItem.user_has_fired : commentItem.user_has_fired
                                     };
                                 }
-
                                 if (commentItem.replies && commentItem.replies.length > 0) {
                                     return { ...commentItem, replies: updateFireRecursive(commentItem.replies) };
                                 }
-
                                 return commentItem;
                             });
                         };
@@ -274,7 +274,6 @@ export default function Home() {
         const handleClickOutside = (clickEvent: MouseEvent) => {
             const notificationElement = notificationRef.current;
             const clickedTarget = clickEvent.target as Node;
-
             const isClickOutsideNotification = notificationElement && !notificationElement.contains(clickedTarget);
 
             if (isClickOutsideNotification) setIsNotificationOpen(false);
@@ -293,17 +292,18 @@ export default function Home() {
     }, []);
 
     const selectedArgument = (argumentsList || []).find((argumentItem) => argumentItem.id === selectedArgumentId) ?? null;
-    const isViewer = userRole === 'viewer';
-    const isLogin = userRole === 'user';
+    
+    const isViewer = user?.role === 'viewer';
+    const isLoggedIn = user !== null;
+    const currentUsername = user?.username ?? 'GUEST';
+    const logicScore = user?.logicScore ?? 0;
 
     const handleAddReply = (argumentId: string, incomingComment: { id: number; content: string; created_at: string; user_id?: number }) => {
         if (!selectedArgumentId) return;
 
-        const activeUserId = currentUserId;
-
         const processedComment: Comment = {
             id: String(incomingComment.id),
-            user_id: incomingComment.user_id || activeUserId || "",
+            user_id: incomingComment.user_id || user?.id || "",
             author: currentUsername,
             content: incomingComment.content,
             timestamp: incomingComment.created_at ? incomingComment.created_at.split('.')[0].replace('T', ' ') : "Just now",
@@ -349,7 +349,6 @@ export default function Home() {
 
         try {
             const response = await api.post(`/api/arguments`, { title: newTitle, content: newContent });
-
             const newArgument = response.data;
 
             setArgumentsList(existingArguments => {
@@ -386,10 +385,11 @@ export default function Home() {
                     </div>
 
                     <div className="flex items-center gap-6 text-xs border-t sm:border-t-0 border-zinc-800 pt-3 sm:pt-0 w-full sm:w-auto justify-between sm:justify-end">
+                        {!isViewer && isLoggedIn && (
                         <div
                             ref={notificationRef}
-                            onClick={() => !isViewer && setIsNotificationOpen(!isNotificationOpen)}
-                            className={`cursor-pointer transition-opacity select-none relative ${isViewer ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-80'}`}
+                            onClick={() => setIsNotificationOpen(!isNotificationOpen)}
+                            className="cursor-pointer transition-opacity select-none relative hover:opacity-80"
                         >
                             <span className="text-zinc-500 block text-[10px]">NOTIFICATION</span>
                             {(() => {
@@ -401,7 +401,7 @@ export default function Home() {
                                 );
                             })()}
 
-                            {isNotificationOpen && !isViewer && (
+                            {isNotificationOpen && (
                                 <div className="absolute right-0 mt-2 w-64 bg-zinc-900 border border-zinc-800 rounded shadow-lg p-2 z-50 max-h-64 overflow-y-auto">
                                     {notifications.length > 0 ? (
                                         notifications.map((notif) => (
@@ -410,7 +410,6 @@ export default function Home() {
                                                 onClick={async () => {
                                                     if (!notif.is_read && notif.id !== undefined && notif.id !== null) {
                                                         await markNotificationAsRead(Number(notif.id));
-
                                                         setNotifications(prev =>
                                                             prev.map(n => n.id === notif.id ? { ...n, is_read: true } : n)
                                                         );
@@ -435,6 +434,7 @@ export default function Home() {
                                 </div>
                             )}
                         </div>
+                        )}
                         
                         <div>
                             <span className="text-zinc-500 block text-[10px]">LOGIC SCORE</span>
@@ -527,7 +527,7 @@ export default function Home() {
                     handleAddReply={handleAddReply}
                 />
 
-                {isLoggedIn && isLogin && (
+                {isLoggedIn && !isViewer && (
                     <CreateArgumentModal
                         isCreateOpen={isCreateOpen}
                         error={error}
@@ -538,6 +538,17 @@ export default function Home() {
                         setIsCreateOpen={setIsCreateOpen}
                         onSubmit={handleCreateSubmit}
                     />
+                )}
+
+                {!isViewer && isLoggedIn && (
+                    <div className="flex items-center gap-4">
+                        <button 
+                            onClick={handleLogout}
+                            className="bg-zinc-900 hover:bg-zinc-800 text-red-400 hover:text-red-300 px-3 py-1 rounded border border-zinc-800 transition-colors"
+                        >
+                            Logout
+                        </button>
+                    </div>
                 )}
             </div>
         </main>

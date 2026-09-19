@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation';
 import { setMemoryAccessToken, api } from '@/app/dashboard/api';
+import { UserProfile } from './dashboard/types';
 
 //outside random words
 const words = ["PAPER", "DOOR", "THIN", "GRASS", "GRAY", "MINE", "CHALK", "CAT", "DOG", "RUN", "FAST", "BIG", "RED", "SUN", "HAT", "CUP", "PEN", "BOX", "CAR", "SKY", "SIT", "MAP", "NET", "BED", "TOY", "PIG", "PAN"];
@@ -25,6 +26,8 @@ export default function AuthPage() {
   const [loginMessage, setLoginMessage] = useState('');
 
   const [selectedWords, setSelectedWords] = useState<string[]>(["","","","","",""]);
+
+  const [user, setUser] = useState<UserProfile | null>(null);
 
   useEffect(() => {
     let timeoutId: NodeJS.Timeout;
@@ -115,11 +118,8 @@ export default function AuthPage() {
       setMemoryAccessToken(response.data.access_token);
       router.push('/dashboard');
     }catch(error: any){
-      if(error.response && typeof error.response.data == 'string'){
-        setError(error.response.data.trim());
-      } else {
-        setError("Network error. Please check your connection");
-      }
+      if (error.response && typeof error.response.data == 'string') setError(error.response.data.trim())
+      else setError('Network error. Please check you connection')
     }finally{
       setLoading(false);
     }
@@ -135,6 +135,14 @@ export default function AuthPage() {
     try {
       const response = await api.post('/api/viewer');
       setMemoryAccessToken(response.data.access_token);
+
+      setUser({
+        id: null,
+        username: response.data.username,
+        role: response.data.role || 'viewer',
+        logicScore: 0
+      });
+
       router.push('/dashboard');
     } catch (error: any){
       if (error.response && typeof error.response.data == 'string') {
