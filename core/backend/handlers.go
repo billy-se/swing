@@ -104,32 +104,34 @@ func (a *App) parseToken(tokenString string) (jwt.MapClaims, error) {
 	return claims, nil
 }
 
-func generateAccessToken(userID int) (string, error) {
+func generateAccessToken(userID int, userName string) (string, error) {
 	jwtAccessSigningKey := os.Getenv("JWT_ACCESS")
 	if jwtAccessSigningKey == "" {
 		return "", errors.New("JWT_ACCESS environment variable is missing")
 	}
 
 	claims := jwt.MapClaims{
-		"user_id": userID,
-		"type":    "access",
-		"exp":     time.Now().Add(time.Minute * 15).Unix(),
+		"username": userName,
+		"user_id":  userID,
+		"type":     "access",
+		"exp":      time.Now().Add(time.Minute * 15).Unix(),
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString([]byte(jwtAccessSigningKey))
 }
 
-func generateRefreshToken(userID int) (string, error) {
+func generateRefreshToken(userID int, userName string) (string, error) {
 	jwtRefreshSigningKey := os.Getenv("JWT_REFRESH")
 	if jwtRefreshSigningKey == "" {
 		return "", errors.New("JWT_REFRESH environment variable is missing")
 	}
 
 	claims := jwt.MapClaims{
-		"user_id": userID,
-		"type":    "refresh",
-		"exp":     time.Now().Add(time.Hour * 24 * 7).Unix(),
+		"username": userName,
+		"user_id":  userID,
+		"type":     "refresh",
+		"exp":      time.Now().Add(time.Hour * 24 * 7).Unix(),
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -189,7 +191,14 @@ func (a *App) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 	userID := int(userIDFloat)
 
-	newAccessToken, err := generateAccessToken(userID)
+	userUsernameString, ok := claims["username"].(string)
+	if !ok {
+		http.Error(w, "Invalid usernmae in the token claims", http.StatusUnauthorized)
+		return
+	}
+	username := userUsernameString
+
+	newAccessToken, err := generateAccessToken(userID, username)
 	if err != nil {
 		http.Error(w, "Failed to generate new access token", http.StatusInternalServerError)
 		return
@@ -265,7 +274,15 @@ func (a *App) handleRefreshToken(w http.ResponseWriter, r *http.Request) {
 	}
 	userID := int(userIDFloat)
 
-	newAccessToken, err := generateAccessToken(userID)
+	userUsernameString, ok := claims["username"].(string)
+	if !ok {
+		http.Error(w, "Invalid usernmae in the token claims", http.StatusUnauthorized)
+		return
+	}
+	username := userUsernameString
+
+	newAccessToken, err := generateAccessToken(userID, username)
+
 	if err != nil {
 		http.Error(w, "Failed to generate access token", http.StatusInternalServerError)
 		return
@@ -310,8 +327,10 @@ func cleanJSONResponse(input string) string {
 }
 
 func (a *App) handleGetProfile(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("DEBUG: handleGetProfile was hit! userId =", r.Context().Value(userIDKey))
+
 	userId := r.Context().Value(userIDKey)
+
+	fmt.Printf("DEBUG: Raw userID from context: %v (type: %T)\n", userId, userId)
 
 	claims, _ := r.Context().Value(claimsKey).(jwt.MapClaims)
 
@@ -426,7 +445,6 @@ func (a *App) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	name := generateNames()
-	fmt.Println("DEBUG: Generate ->", name)
 
 	var defaultScore = 1000
 
@@ -441,6 +459,8 @@ func (a *App) handleRegister(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Email might already be taken", http.StatusBadRequest)
 		return
 	}
+
+	fmt.Printf("Created -> Name: %s, ID: %d\n", name, id)
 
 	w.WriteHeader(http.StatusCreated)
 	fmt.Fprintf(w, `{"message": "User registered successfully", "id": %d}`, id)
@@ -489,8 +509,10 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	fmt.Printf("In -> Name: %s, ID: %d\n", user.Username, user.Id)
+
 	//generate short-lived access token
-	accessToken, err := generateAccessToken(user.Id)
+	accessToken, err := generateAccessToken(user.Id, user.Username)
 	if err != nil {
 		log.Println("JWT Generation Error:", err)
 
@@ -499,7 +521,7 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	//generate long-lived refresh token
-	refreshToken, err := generateRefreshToken(user.Id)
+	refreshToken, err := generateRefreshToken(user.Id, user.Username)
 	if err != nil {
 		log.Println("JWT Generation Error:", err)
 
@@ -623,6 +645,7 @@ func (a *App) WebSocketHandler(w http.ResponseWriter, r *http.Request) {
 		a.hub.unregister <- client
 	}()
 
+	//ctx := context.Background()
 	ctx := r.Context()
 
 	go func() {
@@ -637,7 +660,7 @@ func (a *App) WebSocketHandler(w http.ResponseWriter, r *http.Request) {
 	for {
 		_, _, err := connection.Read(ctx)
 		if err != nil {
-			log.Println("Client disconnected", err)
+			log.Println("Client disconnected: ", err)
 			break
 		}
 	}
@@ -822,6 +845,20 @@ func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
+	userID, _ := r.Context().Value(userIDKey).(int)
+	claims, ok := r.Context().Value(claimsKey).(jwt.MapClaims)
+
+	fmt.Printf("DEBUG CLAIMS: %v (type: %T)\n", claims, claims)
+
+	var username string
+	if ok {
+		if name, exist := claims["username"]; exist {
+			username = name.(string)
+		}
+	}
+
+	fmt.Printf("Out -> Name: %s, ID: %d\n", username, userID)
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     "refresh_token_swing",

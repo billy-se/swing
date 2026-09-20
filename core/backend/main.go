@@ -57,6 +57,7 @@ func main() {
 	mux.HandleFunc("POST /api/arguments", app.authMiddleware(app.handleCreateArgument))
 	mux.HandleFunc("GET /api/arguments", app.handleGetArguments)
 	mux.HandleFunc("POST /api/comments", app.authMiddleware(app.handleCreateComment))
+
 	mux.HandleFunc("/ws", app.WebSocketHandler)
 
 	mux.HandleFunc("/api/comments/fire", app.authMiddleware(app.handleFireReaction))
@@ -112,7 +113,9 @@ func main() {
 
 	mux.HandleFunc("POST /api/ws-ticket", app.authMiddleware(app.handleGenerateWSTicket))
 
-	mux.HandleFunc("POST /api/logout", app.handleLogout)
+	mux.HandleFunc("POST /api/logout", app.authMiddleware(app.handleLogout))
+
+	mux.HandleFunc("GET /api/arguments/top", app.handleTopArguments)
 
 	handler := EnableCORS(mux)
 

@@ -28,6 +28,8 @@ export default function Home() {
 
     const router = useRouter();
 
+    const [activeTab, setActiveTab] = useState<'recent' | 'top'>('recent');
+
     const mapComments = (commentsList: RawComment[]): Comment[] => {
         if (!Array.isArray(commentsList)) return [];
 
@@ -47,7 +49,9 @@ export default function Home() {
 
     const loadArguments = async () => {
         try {
-            const res = await api.get(`/api/arguments`);
+            const endpoint = activeTab === 'top' ? '/api/arguments/top' : '/api/arguments';
+
+            const res = await api.get(endpoint);
             const data = res.data;
             if (!Array.isArray(data)) return;
 
@@ -166,6 +170,7 @@ export default function Home() {
                 } catch (err) {
                     console.error("Failed to load profile", err);
                     setUser(null);
+                    router.push('/');
                 }
             } else {
                 setUser(null);
@@ -188,8 +193,17 @@ export default function Home() {
                 socket = new WebSocket(wsUrl);
                 ws.current = socket;
 
+                socket.onerror = (error) => {
+                    console.error("WebSocket Error Event Triggered:", error);
+                };
+
+                socket.onclose = (event) => {
+                    console.warn(`WebSocket Closed! Code: ${event.code}, Reason: ${event.reason}`);
+                };
+
                 socket.onmessage = (fromServerJson) => {
                     const messageJson = JSON.parse(fromServerJson.data);
+                    console.log("WS Received:", messageJson);
 
                     if (messageJson.type === "NEW_ARGUMENT") {
                         const rawPayload = messageJson.payload || messageJson;
@@ -462,8 +476,15 @@ export default function Home() {
                     <div className="flex justify-between items-center bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-xs text-zinc-400 shrink-0">
                         <span className="text-zinc-200 font-bold tracking-wider px-1">ACTIVE DEBATES</span>
                         <div className="flex gap-10 bg-zinc-900/60 p-1 rounded-lg border border-zinc-800">
-                            <button className="text-emerald-400 hover:underline">Recent</button>
-                            <button className="hover:text-zinc-200">Top</button>
+                            <button 
+                                onClick={() => setActiveTab('recent')}
+                                className={activeTab === 'recent' ? "text-emerald-400 underline font-semibold" : "text-zinc-400 hover:text-zinc-200"}
+                                >
+                                    Recent</button>
+
+                            <button 
+                                onClick={() => setActiveTab('top')}
+                                className={activeTab === 'top' ? "text-emerald-400 underline font-semibold" : "text-zinc-400 hover:text-zinc-200"}>Top</button>
                             <button className="text-zinc-400 hover:text-zinc-200">WatchList</button>
                         </div>
                     </div>

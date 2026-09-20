@@ -118,3 +118,24 @@ func (a *App) ApplyConsensusDeflationTx(tx *sql.Tx, commentID int64, argumentID 
 
 	return nil
 }
+
+func (a *App) updateArgumentLogicScore(argumentID int64, friction float64) error {
+	query := `
+		UPDATE arguments 
+		SET logic_score = (
+			$1::float * (
+				(SELECT COUNT(*) FROM comments WHERE argument_id = arguments.id) +
+				(SELECT COUNT(*) FROM comment_reactions cr 
+				 JOIN comments c ON cr.comment_id = c.id 
+				 WHERE c.argument_id = arguments.id AND cr.reaction_type = 'fire')
+			)
+		) / 
+		GREATEST(1.0, EXTRACT(EPOCH FROM (NOW() - created_at)) / 3600.0 + 2.0)
+		WHERE id = $2
+	`
+	_, err := a.DB.Exec(query, friction, argumentID)
+	if err != nil {
+		return fmt.Errorf("failed to update argument logic score: %w", err)
+	}
+	return nil
+}

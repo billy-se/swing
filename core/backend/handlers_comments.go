@@ -133,6 +133,26 @@ func (a *App) handleFireReaction(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	scoreQuery := `
+        UPDATE arguments 
+        SET logic_score = (
+            $1::float * (
+                (SELECT COUNT(*) FROM comments WHERE argument_id = arguments.id) +
+                (SELECT COUNT(*) FROM comment_reactions cr 
+                 JOIN comments c ON cr.comment_id = c.id 
+                 WHERE c.argument_id = arguments.id AND cr.reaction_type = 'fire')
+            )
+        ) / 
+        GREATEST(1.0, EXTRACT(EPOCH FROM (NOW() - created_at)) / 3600.0 + 2.0)
+        WHERE id = $2
+    `
+	_, err = tx.Exec(scoreQuery, 1.0, argumentID)
+	if err != nil {
+		println("Argument Score Update Error:", err.Error())
+		http.Error(w, "Failed to update argument score", http.StatusInternalServerError)
+		return
+	}
+
 	if err := tx.Commit(); err != nil {
 		http.Error(w, "Transaction commit failed", http.StatusInternalServerError)
 		return
@@ -204,6 +224,10 @@ func (a *App) handleCreateComment(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Database insert error: %v", err)
 		http.Error(w, "Failed to save comment", http.StatusInternalServerError)
 		return
+	}
+
+	if err := a.updateArgumentLogicScore(input.ArgumentID, 1.0); err != nil {
+		log.Printf("Failed to update argument logic score: %v", err)
 	}
 
 	var ownerID int
@@ -313,9 +337,9 @@ func (a *App) handleGetComments(w http.ResponseWriter, r *http.Request) {
 		parts := strings.SplitN(authHeader, " ", 2)
 		if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
 			if claims, err := a.parseToken(parts[1]); err == nil {
-				
+
 				if userIDFloat, ok := claims["user_id"].(float64); ok {
-					currentUserID =int64(userIDFloat)
+					currentUserID = int64(userIDFloat)
 				}
 			}
 		}
