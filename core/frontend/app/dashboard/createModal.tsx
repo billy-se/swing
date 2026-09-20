@@ -41,7 +41,7 @@ export function CreateArgumentModal({
                             required
                             value={newTitle} 
                             onChange={(changeEvent) => setNewTitle(changeEvent.target.value)}
-                            placeholder="Summary of your architecture or paper proposal..." 
+                            placeholder="The core idea" 
                             className="bg-zinc-950 border border-zinc-800 p-2 rounded text-xs text-zinc-200 outline-none focus:border-zinc-600"
                         />
                     </div>
@@ -53,7 +53,7 @@ export function CreateArgumentModal({
                             rows={6}
                             value={newContent} 
                             onChange={(changeEvent) => setNewContent(changeEvent.target.value)}
-                            placeholder="Detail your logical proof, constraints, or code design..." 
+                            placeholder="Show the logic" 
                             className="bg-zinc-950 border border-zinc-800 p-2 rounded text-xs text-zinc-200 outline-none focus:border-zinc-600 leading-relaxed"
                         />
                     </div>

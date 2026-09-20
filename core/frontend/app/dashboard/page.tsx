@@ -28,7 +28,7 @@ export default function Home() {
 
     const router = useRouter();
 
-    const [activeTab, setActiveTab] = useState<'recent' | 'top'>('recent');
+    const [activeTab, setActiveTab] = useState<'recent' | 'top' | 'watchlist'>('recent');
 
     const mapComments = (commentsList: RawComment[]): Comment[] => {
         if (!Array.isArray(commentsList)) return [];
@@ -49,7 +49,11 @@ export default function Home() {
 
     const loadArguments = async () => {
         try {
-            const endpoint = activeTab === 'top' ? '/api/arguments/top' : '/api/arguments';
+            const endpoint = activeTab === 'top'
+                ? '/api/arguments/top' 
+                : activeTab === 'watchlist'
+                    ? '/api/watchlist'
+                    : '/api/arguments';
 
             const res = await api.get(endpoint);
             const data = res.data;
@@ -65,6 +69,26 @@ export default function Home() {
             console.error("Failed to fetch arguments:", err);
         }
     };
+
+    const handleToggleWatch = async (argumentId: number) => {
+        try {
+            const res = await api.post('/api/watchlist', { argument_id: argumentId });
+
+            setArgumentsList(prevList =>
+                prevList.map(arg => {
+                    if (arg.id === argumentId) {
+                        return {
+                            ...arg,
+                            is_watched: res.data.status === 'watched'
+                        };
+                    }
+                    return arg;
+                })
+            );
+        }catch (err) {
+            console.error("Failed to toggle watchlist: ", err);
+        }
+    }
 
     const loadNotifications = async () => {
         try {
@@ -317,7 +341,7 @@ export default function Home() {
             }
             ws.current = null;
         };
-    }, []);
+    }, [activeTab]);
 
     const selectedArgument = (argumentsList || []).find((argumentItem) => argumentItem.id === selectedArgumentId) ?? null;
     
@@ -485,7 +509,9 @@ export default function Home() {
                             <button 
                                 onClick={() => setActiveTab('top')}
                                 className={activeTab === 'top' ? "text-emerald-400 underline font-semibold" : "text-zinc-400 hover:text-zinc-200"}>Top</button>
-                            <button className="text-zinc-400 hover:text-zinc-200">WatchList</button>
+                            <button 
+                                onClick={() => setActiveTab('watchlist')}
+                                className={activeTab === 'watchlist' ? "text-emerald-400 underline font-semibold" : "text-zinc-400 hover:text-zinc-200"}>WatchList</button>
                         </div>
                     </div>
 
@@ -494,7 +520,16 @@ export default function Home() {
                             <div key={check.id} className="bg-zinc-950 border border-zinc-800 rounded-lg p-5 flex flex-col gap-4 hover:border-zinc-700 transition-colors">
                                 <div className="flex justify-between items-center text-[10px] text-zinc-500">
                                     <span>AUTHOR: [{check.author}]</span>
-                                    <span className="bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800 text-zinc-300">Pull Request #104</span>
+                                    <button 
+                                        onClick={() => handleToggleWatch(check.id)}
+                                        className={`px-2.5 py-1 rounded border text-xs font-medium transition-colors flex items-center gap-1.5 ${
+                                            check.is_watched 
+                                                ? 'bg-emerald-950/50 border-emerald-500/50 text-emerald-400' 
+                                                : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-700'
+                                        }`}
+                                    >
+                                        <span>{check.is_watched ? '★' : '☆'}</span>
+                                    </button>
                                 </div>
                                 <h2 className="text-sm font-semibold text-zinc-100">
                                     {check.title}
@@ -525,7 +560,7 @@ export default function Home() {
                                 SUBMIT FOR REVIEW
                             </h2>
                             <p className="text-xs text-zinc-500">
-                                Submit a code proposal, paper, or architectural argument to the blind review pool.
+                                Drop the fluff and state your case.
                             </p>
                             <button className="w-full bg-emerald-600 hover:bg-emerald-500 text-black font-semibold py-2 rounded text-xs transition-colors"
                                 onClick={() => setIsCreateOpen(true)}>

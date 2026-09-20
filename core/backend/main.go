@@ -117,6 +117,9 @@ func main() {
 
 	mux.HandleFunc("GET /api/arguments/top", app.handleTopArguments)
 
+	mux.HandleFunc("POST /api/watchlist", app.authMiddleware(app.handleCreateWatchlist))
+	mux.HandleFunc("GET /api/watchlist", app.authMiddleware(app.handleGetWatchlist))
+
 	handler := EnableCORS(mux)
 
 	configuration := config.Load()

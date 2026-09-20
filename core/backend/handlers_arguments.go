@@ -22,6 +22,7 @@ type ArgumentResponse struct {
 	Content    string          `json:"content"`
 	LogicScore int             `json:"logic_score"`
 	PlanScore  float64         `json:"plan_score"`
+	IsWatched  bool            `json:"is_watched"`
 	CreatedAt  string          `json:"created_at"`
 	Comments   []*CommentInput `json:"comments"`
 }
@@ -341,18 +342,11 @@ func (a *App) handleTopArguments(w http.ResponseWriter, r *http.Request) {
 	}
 
 	query := `
-		SELECT 
-			a.id, a.user_id, a.title, a.content, a.logic_score, a.author, a.created_at,
-			(1.0 * COALESCE(rc.reply_count, 0)) / GREATEST(EXTRACT(EPOCH FROM (NOW() - a.created_at)) / 3600, 1) AS plan_score
-
-		FROM arguments a
-		LEFT JOIN (
-			SELECT argument_id, COUNT(*) AS reply_count
-			FROM comments
-			GROUP BY argument_id
-		) rc ON rc.argument_id = a.id
-		ORDER BY plan_score DESC
-	`
+        SELECT 
+            a.id, a.user_id, a.title, a.content, a.logic_score, a.author, a.created_at, a.logic_score AS plan_score
+        FROM arguments a
+        ORDER BY a.logic_score DESC
+    `
 
 	rows, err := a.DB.Query(query)
 	if err != nil {
@@ -481,6 +475,154 @@ func (a *App) handleTopArguments(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := rows.Err(); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if arguments == nil {
+		arguments = []ArgumentResponse{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(arguments)
+}
+
+func (a *App) handleCreateWatchlist(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	userIDVal := r.Context().Value(userIDKey)
+	if userIDVal == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var userID int64
+	switch v := userIDVal.(type) {
+	case int:
+		userID = int64(v)
+	case int64:
+		userID = v
+	case float64:
+		userID = int64(v)
+	default:
+		http.Error(w, "Invalid user context", http.StatusUnauthorized)
+		return
+	}
+
+	var req struct {
+		ArgumentID int64 `json:"argument_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid payload", http.StatusBadRequest)
+		return
+	}
+
+	var exists bool
+	err := a.DB.QueryRow(`
+		SELECT EXISTS(
+			SELECT 1 from watchlist
+			WHERE user_id = $1 AND argument_id = $2
+		)`, userID, req.ArgumentID).Scan(&exists)
+	if err != nil {
+		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+
+	var actionStatus string
+	if exists {
+		_, err = a.DB.Exec(`
+			DELETE FROM watchlist
+			WHERE user_id = $1 AND argument_id = $2`,
+			userID, req.ArgumentID,
+		)
+		actionStatus = "unwatched"
+	} else {
+		_, err = a.DB.Exec(`
+			INSERT INTO watchlist (user_id, argument_id)
+			VALUES ($1,$2)`,
+			userID, req.ArgumentID,
+		)
+		actionStatus = "watched"
+	}
+
+	if err != nil {
+		http.Error(w, "Failed to update watchlist", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status": actionStatus,
+	})
+}
+
+func (a *App) handleGetWatchlist(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	userIDVal := r.Context().Value(userIDKey)
+	if userIDVal == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var userID int64
+	switch v := userIDVal.(type) {
+	case int:
+		userID = int64(v)
+	case int64:
+		userID = v
+	case float64:
+		userID = int64(v)
+	default:
+		http.Error(w, "Invalid user context", http.StatusUnauthorized)
+		return
+	}
+
+	query := `
+		SELECT
+			a.id, a.user_id, a.title, a.content, a.logic_score, a.author, a.created_at, a.logic_score AS plan_score, true AS is_watched
+		FROM arguments a
+		JOIN watchlist w ON w.argument_id = a.id
+		WHERE w.user_id = $1
+		ORDER BY a.logic_score DESC
+	`
+	rows, err := a.DB.Query(query, userID)
+	if err != nil {
+		log.Printf("Watchlist fetch error: %v", err)
+		http.Error(w, "Failed to fetch watchlist", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	arguments := []ArgumentResponse{}
+
+	for rows.Next() {
+		var arg ArgumentResponse
+		var rawUserID sql.NullInt32
+		var authorNull sql.NullString
+
+		if err := rows.Scan(&arg.ID, &rawUserID, &arg.Title, &arg.Content, &arg.LogicScore, &authorNull, &arg.CreatedAt, &arg.PlanScore, &arg.IsWatched); err != nil {
+			log.Printf("Scan error on watchlist row: %v", err)
+			continue
+		}
+
+		if authorNull.Valid && authorNull.String != "" {
+			arg.Author = authorNull.String
+		} else {
+			arg.Author = "ANONYMOUS_DEV"
+		}
+
+		arg.Comments = []*CommentInput{}
+		arguments = append(arguments, arg)
+	}
+
+	if err := rows.Err(); err != nil {
+		http.Error(w, "Error iterating argument rows", http.StatusInternalServerError)
 		return
 	}
 

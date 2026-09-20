@@ -18,6 +18,7 @@ export interface Argument {
     logic_score: number;
     created_at: string;
     comments?: Comment[];
+    is_watched?: boolean;
 }
 
 export interface NotificationItem {
