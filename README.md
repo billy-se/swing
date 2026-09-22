@@ -105,14 +105,14 @@ Aggressive Dynamic Scoring v1.0 is a zero-sum, deflationary scoring engine desig
     <tr>
       <td><strong>Baseline Test</strong></td>
       <td>10 VUs</td>
-      <td>3.34 ms</td>
+      <td>2.3 ms</td>
       <td>100.0%</td>
       <td>Clean connection</td>
     </tr>
     <tr>
       <td><strong>Stress Test</strong></td>
       <td>500 VUs</td>
-      <td>239.65 ms</td>
+      <td>10.13 ms</td>
       <td>0.0% (Client-side teardown)</td>
       <td>User requested disconnects</td>
     </tr>
