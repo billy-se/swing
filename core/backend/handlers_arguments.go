@@ -178,11 +178,14 @@ func (a *App) handleGetArguments(w http.ResponseWriter, r *http.Request) {
 	}
 
 	query := `
-        SELECT id, user_id, title, content, logic_score, author, created_at 
-        FROM arguments 
-        ORDER BY created_at DESC
+        SELECT a.id, a.user_id, a.title, a.content, a.logic_score, a.author, a.created_at,
+		a.logic_score AS plan_score,
+		CASE WHEN w.user_id IS NOT NULL THEN true ELSE false END AS is_watched
+        FROM arguments a
+		LEFT JOIN watchlist w ON w.argument_id = a.id AND w.user_id = $1
+        ORDER BY a.created_at DESC
     `
-	rows, err := a.DB.Query(query)
+	rows, err := a.DB.Query(query, currentUserID)
 	if err != nil {
 		log.Printf("Fetch error: %v", err)
 		http.Error(w, "Failed to fetch arguments", http.StatusInternalServerError)
@@ -197,7 +200,7 @@ func (a *App) handleGetArguments(w http.ResponseWriter, r *http.Request) {
 		var rawUserID sql.NullInt32
 		var authorNull sql.NullString
 
-		if err := rows.Scan(&arg.ID, &rawUserID, &arg.Title, &arg.Content, &arg.LogicScore, &authorNull, &arg.CreatedAt); err != nil {
+		if err := rows.Scan(&arg.ID, &rawUserID, &arg.Title, &arg.Content, &arg.LogicScore, &authorNull, &arg.CreatedAt, &arg.PlanScore, &arg.IsWatched); err != nil {
 			log.Printf("Scan error on argument row: %v", err)
 			continue
 		}
@@ -343,12 +346,14 @@ func (a *App) handleTopArguments(w http.ResponseWriter, r *http.Request) {
 
 	query := `
         SELECT 
-            a.id, a.user_id, a.title, a.content, a.logic_score, a.author, a.created_at, a.logic_score AS plan_score
+            a.id, a.user_id, a.title, a.content, a.logic_score, a.author, a.created_at, a.logic_score AS plan_score,
+			CASE WHEN w.user_id IS NOT NULL THEN true ELSE false END AS is_watched
         FROM arguments a
+		LEFT JOIN watchlist w ON w.argument_id = a.id AND w.user_id = $1
         ORDER BY a.logic_score DESC
     `
 
-	rows, err := a.DB.Query(query)
+	rows, err := a.DB.Query(query, currentUserID)
 	if err != nil {
 		log.Printf("Top arguments fetch error: %v", err)
 		http.Error(w, "Failed to fetch top arguments", http.StatusInternalServerError)
@@ -363,7 +368,7 @@ func (a *App) handleTopArguments(w http.ResponseWriter, r *http.Request) {
 		var rawUserID sql.NullInt32
 		var authorNull sql.NullString
 
-		if err := rows.Scan(&arg.ID, &rawUserID, &arg.Title, &arg.Content, &arg.LogicScore, &authorNull, &arg.CreatedAt, &arg.PlanScore); err != nil {
+		if err := rows.Scan(&arg.ID, &rawUserID, &arg.Title, &arg.Content, &arg.LogicScore, &authorNull, &arg.CreatedAt, &arg.PlanScore, &arg.IsWatched); err != nil {
 			log.Printf("Scan error on top argument row: %v", err)
 			continue
 		}

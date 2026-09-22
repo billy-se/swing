@@ -29,6 +29,7 @@ export default function Home() {
     const router = useRouter();
 
     const [activeTab, setActiveTab] = useState<'recent' | 'top' | 'watchlist'>('recent');
+    const [isLoading, setIsLoading] = useState(true);
 
     const mapComments = (commentsList: RawComment[]): Comment[] => {
         if (!Array.isArray(commentsList)) return [];
@@ -73,10 +74,11 @@ export default function Home() {
     const handleToggleWatch = async (argumentId: number) => {
         try {
             const res = await api.post('/api/watchlist', { argument_id: argumentId });
+            console.log("Watchlist API Response:", res.data);
 
             setArgumentsList(prevList =>
                 prevList.map(arg => {
-                    if (arg.id === argumentId) {
+                    if (String(arg.id) === String(argumentId)) {
                         return {
                             ...arg,
                             is_watched: res.data.status === 'watched'
@@ -144,9 +146,11 @@ export default function Home() {
         let socket: WebSocket | null = null;
         let isMounted = true;
 
-        loadArguments();
-
         const initializeConnection = async () => {
+
+            try {
+            await loadArguments();
+
             const sessionViewerName = sessionStorage.getItem('viewer_username');
             const sessionRole = sessionStorage.getItem('user_role');
 
@@ -315,10 +319,14 @@ export default function Home() {
                         setNotifications(existingNotifications => [incomingNotification, ...existingNotifications]);
                     }
                 };
-
             } catch (error) {
                 console.error("Failed to fetch WebSocket ticket or connect:", error);
             }
+        } catch (error) {
+            console.error("Initialization error:", error);
+        } finally {
+            if (isMounted) setIsLoading(false);
+        }
         };
 
         initializeConnection();
@@ -424,6 +432,12 @@ export default function Home() {
 
     return (
     <main className="h-[100dvh] w-full bg-black text-zinc-100 font-mono p-6 md:p-12 flex justify-center overflow-hidden box-border">
+        {isLoading ? (
+            <div className="w-full h-full flex flex-col justify-center items-center gap-3">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-500"></div>
+                <span className="text-xs text-zinc-500 tracking-widest uppercase">Initializing Session...</span>
+            </div>
+        ) : (
         <div className="w-full max-w-6xl flex flex-col gap-4 h-[calc(100dvh-3rem)] md:h-[calc(100dvh-6rem)] overflow-hidden box-border">
 
             <header className="bg-zinc-950 border border-zinc-800 rounded-lg p-4 md:p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 shrink-0">
@@ -509,18 +523,22 @@ export default function Home() {
                             <button 
                                 onClick={() => setActiveTab('top')}
                                 className={activeTab === 'top' ? "text-emerald-400 underline font-semibold" : "text-zinc-400 hover:text-zinc-200"}>Top</button>
-                            <button 
+                            {!isViewer && <button 
                                 onClick={() => setActiveTab('watchlist')}
-                                className={activeTab === 'watchlist' ? "text-emerald-400 underline font-semibold" : "text-zinc-400 hover:text-zinc-200"}>WatchList</button>
+                                className={activeTab === 'watchlist' ? "text-emerald-400 underline font-semibold" : "text-zinc-400 hover:text-zinc-200"}
+                                >
+                                    WatchList</button>}
+                            
                         </div>
                     </div>
 
                     <div className="flex-1 min-h-0 overflow-y-auto space-y-4 pr-2 pb-6 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-                        {(argumentsList || []).map((check) => (
-                            <div key={check.id} className="bg-zinc-950 border border-zinc-800 rounded-lg p-5 flex flex-col gap-4 hover:border-zinc-700 transition-colors">
+                        {(argumentsList || []).length > 0 ? (
+                        (argumentsList || []).map((check) => (
+                                <div key={check.id} className="bg-zinc-950 border border-zinc-800 rounded-lg p-5 flex flex-col gap-4 hover:border-zinc-700 transition-colors">
                                 <div className="flex justify-between items-center text-[10px] text-zinc-500">
                                     <span>AUTHOR: [{check.author}]</span>
-                                    <button 
+                                    {!isViewer && <button 
                                         onClick={() => handleToggleWatch(check.id)}
                                         className={`px-2.5 py-1 rounded border text-xs font-medium transition-colors flex items-center gap-1.5 ${
                                             check.is_watched 
@@ -529,7 +547,7 @@ export default function Home() {
                                         }`}
                                     >
                                         <span>{check.is_watched ? '★' : '☆'}</span>
-                                    </button>
+                                    </button>}
                                 </div>
                                 <h2 className="text-sm font-semibold text-zinc-100">
                                     {check.title}
@@ -549,7 +567,11 @@ export default function Home() {
                                     </button>
                                 </div>
                             </div>
-                        ))}
+                        ))
+                    ) : activeTab === 'watchlist' ? (<div className="text-xs text-zinc-500 text-center">No Watchlist added yet</div>): 
+                        activeTab === 'top' ? (<div className="text-xs text-zinc-500 text-center">No Argument yet</div>):
+                        (<div className="text-xs text-zinc-500 text-center">No Argument yet</div>
+                        )}
                     </div>
                 </div>
 
@@ -623,6 +645,7 @@ export default function Home() {
                 />
             )}
         </div>
+        )}
     </main>
 );
 }
