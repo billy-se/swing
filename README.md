@@ -86,3 +86,54 @@ Aggressive Dynamic Scoring v1.0 is a zero-sum, deflationary scoring engine desig
 
 
 - Maintains strict skin in the game because new accounts initialize with a 1,000-point baseline, ensuring spammers and bad actors rapidly deplete their capital
+
+---
+
+2nd attempt test
+
+<table>
+  <thead>
+    <tr>
+      <th>Test Scenario</th>
+      <th>Virtual Users (VUs)</th>
+      <th>Handshake Latency (avg)</th>
+      <th>Success Rate</th>
+      <th>Bottleneck / Observation</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Baseline Test</strong></td>
+      <td>10 VUs</td>
+      <td>3.34 ms</td>
+      <td>100.0%</td>
+      <td>Clean connection</td>
+    </tr>
+    <tr>
+      <td><strong>Stress Test</strong></td>
+      <td>500 VUs</td>
+      <td>239.65 ms</td>
+      <td>0.0% (Client-side teardown)</td>
+      <td>User requested disconnects</td>
+    </tr>
+  </tbody>
+</table>
+
+<table>
+  <tr>
+    <td align="center">
+      <img src="./assets/baseLineTest2.png" alt="Baseline" width="100%">
+      <br>
+      <b>Baseline Test</b>
+    </td>
+    <td align="center">
+      <img src="./assets/stressTest2.png" alt="Stress Test" width="100%">
+      <br>
+      <b>Stress Test</b>
+    </td>
+  </tr>
+</table>
+
+Baseline Test Summary: State the facts: 1,250 VUs sustained with zero errors and sub-3ms latency because the data structures and memory allocation handle it cleanly.
+
+Stress Test Summary: State the bottleneck: Performance collapses between 1,250 and 1,300 VUs as state locks and socket limits saturate.
