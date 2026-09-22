@@ -274,6 +274,20 @@ func (a *App) handleRefreshToken(w http.ResponseWriter, r *http.Request) {
 	}
 	userID := int(userIDFloat)
 
+	refreshToken := cookie.Value
+
+	var expiresAt time.Time
+	query := "SELECT user_id, expires_at FROM refresh_tokens WHERE token_hash = $1"
+	err = a.DB.QueryRow(query, refreshToken).Scan(&userID, &expiresAt)
+
+	if err == sql.ErrNoRows || time.Now().After(expiresAt) {
+		http.Error(w, "Invalid or expires refresh_token (Session terminated)", http.StatusUnauthorized)
+		return
+	} else if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
 	userUsernameString, ok := claims["username"].(string)
 	if !ok {
 		http.Error(w, "Invalid usernmae in the token claims", http.StatusUnauthorized)
@@ -511,6 +525,22 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Printf("In -> Name: %s, ID: %d\n", user.Username, user.Id)
 
+	var activeSessionCount int
+	err = a.DB.QueryRow(
+		"SELECT COUNT(*) FROM sessions WHERE user_id = $1 AND expires_at > NOW() AND last_seen > NOW() - INTERVAL '30 seconds'",
+		user.Id,
+	).Scan(&activeSessionCount)
+
+	if activeSessionCount > 0 {
+		http.Error(w, "Someone is using this account", http.StatusConflict)
+		return
+	}
+
+	_, err = a.DB.Exec("DELETE FROM sessions WHERE user_id = $1 AND last_seen <= NOW() - INTERVAL '30 seconds'", user.Id)
+	if err != nil {
+		log.Println("Failed to clear stale sessions:", err)
+	}
+
 	//generate short-lived access token
 	accessToken, err := generateAccessToken(user.Id, user.Username)
 	if err != nil {
@@ -529,6 +559,17 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	expiresAt := time.Now().Add(time.Hour * 24 * 7)
+	_, err = a.DB.Exec(
+		"INSERT INTO sessions (user_id, token_hash, expires_at) VALUES ($1, $2, $3)",
+		user.Id, refreshToken, expiresAt,
+	)
+	if err != nil {
+		log.Println("Database error saving refresh token:", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
 	http.SetCookie(w, &http.Cookie{
 		Name:     "refresh_token_swing",
 		Value:    refreshToken,
@@ -536,7 +577,7 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 		Secure:   false,
 		SameSite: http.SameSiteLaxMode,
-		Expires:  time.Now().Add(time.Hour * 24 * 7),
+		Expires:  expiresAt,
 	})
 
 	/*tokenString, err := generateJWT(user.Id) // old method
@@ -554,6 +595,28 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		"username":     user.Username, //username,
 		"role":         user.Role,
 	})
+}
+
+func (a *App) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	cookie, err := r.Cookie("refresh_token_swing")
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	_, err = a.DB.Exec("UPDATE sessions SET last_seen = NOW() WHERE token_hash = $1", cookie.Value)
+	if err != nil {
+		log.Println("Heartbeat DB Error:", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 }
 
 func EnableCORS(next http.Handler) http.Handler {
@@ -846,7 +909,19 @@ func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, _ := r.Context().Value(userIDKey).(int)
+	userID, ok := r.Context().Value(userIDKey).(int)
+	if ok && userID > 0 {
+		_, err := a.DB.Exec("DELETE FROM sessions WHERE user_id = $1", userID)
+		if err != nil {
+			log.Println("Database error clearing sessions on logout:", err)
+		}
+	} else {
+		cookie, err := r.Cookie("refresh_token_swing")
+		if err == nil {
+			a.DB.Exec("DELETE FROM sessions WHERE token_hash = $1", cookie.Value)
+		}
+	}
+
 	claims, ok := r.Context().Value(claimsKey).(jwt.MapClaims)
 
 	fmt.Printf("DEBUG CLAIMS: %v (type: %T)\n", claims, claims)

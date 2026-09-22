@@ -30,6 +30,7 @@ export default function Home() {
 
     const [activeTab, setActiveTab] = useState<'recent' | 'top' | 'watchlist'>('recent');
     const [isLoading, setIsLoading] = useState(true);
+    const [isAuthInitialized, setIsAuthInitialized] = useState(false); 
 
     const mapComments = (commentsList: RawComment[]): Comment[] => {
         if (!Array.isArray(commentsList)) return [];
@@ -132,13 +133,13 @@ export default function Home() {
         }
     };
 
-    const handleLogoutAndReload = () => {
+    /*const handleLogoutAndReload = () => {
 
         sessionStorage.clear();
         localStorage.clear();
         
         window.location.href = '/login'; 
-    };
+    };*/
 
     useEffect(() => {
         if (ws.current && (ws.current.readyState === WebSocket.OPEN || ws.current.readyState === WebSocket.CONNECTING)) return;
@@ -149,7 +150,7 @@ export default function Home() {
         const initializeConnection = async () => {
 
             try {
-            await loadArguments();
+            //await loadArguments();
 
             const sessionViewerName = sessionStorage.getItem('viewer_username');
             const sessionRole = sessionStorage.getItem('user_role');
@@ -325,7 +326,10 @@ export default function Home() {
         } catch (error) {
             console.error("Initialization error:", error);
         } finally {
-            if (isMounted) setIsLoading(false);
+            if (isMounted) {
+                setIsLoading(false); 
+                setIsAuthInitialized(true);
+            }
         }
         };
 
@@ -349,7 +353,12 @@ export default function Home() {
             }
             ws.current = null;
         };
-    }, [activeTab]);
+    }, []);
+
+    useEffect(() => {
+        if (!isAuthInitialized) return;
+        loadArguments();
+    },[activeTab, isAuthInitialized]);
 
     const selectedArgument = (argumentsList || []).find((argumentItem) => argumentItem.id === selectedArgumentId) ?? null;
     
@@ -357,6 +366,19 @@ export default function Home() {
     const isLoggedIn = user !== null;
     const currentUsername = user?.username ?? 'GUEST';
     const logicScore = user?.logicScore ?? 0;
+
+    useEffect(() => {
+        if (!isLoggedIn || isViewer) return;
+
+        const interval = setInterval(async () => {
+            try {
+                await api.post('/api/heartbeat');
+            } catch (err) {
+                console.error("Heartbeat failed", err);
+            }
+        }, 20000);
+        return () => clearInterval(interval);
+    }, [isLoggedIn, isViewer]);
 
     const handleAddReply = (argumentId: string, incomingComment: { id: number; content: string; created_at: string; user_id?: number }) => {
         if (!selectedArgumentId) return;
@@ -482,6 +504,7 @@ export default function Home() {
                                                 }
 
                                                 if (notif.argument_id !== undefined && notif.argument_id !== null) {
+                                                    setActiveTab('recent');
                                                     setSelectedArgumentId(Number(notif.argument_id));
                                                     setTargetCommentId(notif.comment_id || null);
                                                     setIsReviewOpen(true);
@@ -501,12 +524,14 @@ export default function Home() {
                         )}
                     </div>
                     )}
-                    
+                    {!isViewer && isLoggedIn && (
                     <div>
                         <span className="text-zinc-500 block text-[10px]">LOGIC SCORE</span>
                         <span className="text-emerald-400 font-bold">{logicScore}</span>
                     </div>
+                    )}
                 </div>
+                
             </header>
             
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-0 overflow-hidden">

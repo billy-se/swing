@@ -22,6 +22,18 @@ interface ReviewModalProps {
 
 export function ReviewModal({ isReviewOpen, selectedArgument, targetCommentId, setIsReviewOpen, handleAddReply }: ReviewModalProps) {
 
+    useEffect(() => {
+    if (isReviewOpen && targetCommentId) {
+        const timer = setTimeout(() => {
+            const element = document.getElementById(`comment-${targetCommentId}`);
+            if (element) {
+                element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        }, 100);
+        return () => clearTimeout(timer);
+    }
+}, [isReviewOpen, targetCommentId]);
+
     if (!isReviewOpen || !selectedArgument) return null;
 
     return (
