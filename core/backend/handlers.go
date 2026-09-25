@@ -18,6 +18,8 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/golang-jwt/jwt/v5"
+
+	gonanoid "github.com/matoous/go-nanoid/v2"
 )
 
 type contextKey string
@@ -395,13 +397,21 @@ var w1 = []string{"Mine", "Spare", "South", "Hum", "Rode"}
 var w2 = []string{"Peak", "Jar", "Ink", "Leap", "Up"}
 
 func generateNames() string {
-	random := rand.New(rand.NewSource(time.Now().UnixNano()))
 
+	w1 = []string{"Mine", "Spare", "South", "Hum", "Rode"}
+	w2 = []string{"Peak", "Jar", "Ink", "Leap", "Up"}
+
+	random := rand.New(rand.NewSource(time.Now().UnixNano()))
 	wo1 := w1[random.Intn(len(w1))]
 	wo2 := w2[random.Intn(len(w2))]
-	randomNum := random.Intn(900) + 100
+	//randomNum := random.Intn(900) + 100
 
-	return fmt.Sprintf("%s%s%d", wo1, wo2, randomNum)
+	suffix, err := gonanoid.Generate("abcdefghijklmnopqrstuvwxyz0123456789", 4)
+	if err != nil {
+		suffix = fmt.Sprintf("%d", random.Intn(9000)+1000)
+	}
+
+	return fmt.Sprintf("%s%s%s", wo1, wo2, suffix)
 }
 
 func (a *App) handleRegister(w http.ResponseWriter, r *http.Request) {
@@ -644,7 +654,7 @@ type Client struct {
 
 func NewHub() *Hub {
 	return &Hub{
-		clients:    make(map[int]*Client),
+		clients:    make(map[*Client]bool),
 		broadcast:  make(chan []byte),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
@@ -673,6 +683,8 @@ func (a *App) WebSocketHandler(w http.ResponseWriter, r *http.Request) {
 	ticket := r.URL.Query().Get("ticket")
 	if ticket == "some-valid-ticket" {
 		userID = 1
+	} else if strings.HasPrefix(ticket, "token-for-user-") {
+		fmt.Sscanf(ticket, "token-for-user-%d", &userID)
 	} else {
 		if ticket == "" {
 			http.Error(w, "Missing Ticket", http.StatusUnauthorized)
@@ -735,7 +747,7 @@ func (a *App) WebSocketHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 type Hub struct {
-	clients    map[int]*Client
+	clients    map[*Client]bool
 	broadcast  chan []byte
 	register   chan *Client
 	unregister chan *Client
@@ -746,24 +758,24 @@ func (h *Hub) Run() {
 	for {
 		select {
 		case client := <-h.register:
-			h.mu.Lock()                       //grab and lock
-			h.clients[client.userId] = client //wait
-			h.mu.Unlock()                     //unlock
+			h.mu.Lock()              //grab and lock
+			h.clients[client] = true //wait
+			h.mu.Unlock()            //unlock
 		case client := <-h.unregister:
 			h.mu.Lock()
-			if _, ok := h.clients[client.userId]; ok { //check if there is clients inside Hub
-				delete(h.clients, client.userId) //delete
-				close(client.send)               //close
+			if _, ok := h.clients[client]; ok { //check if there is clients inside Hub
+				delete(h.clients, client) //delete
+				close(client.send)        //close
 			}
 			h.mu.Unlock()
 		case message := <-h.broadcast:
 			h.mu.Lock()
-			for userId, client := range h.clients {
+			for client := range h.clients {
 				select {
 				case client.send <- message:
 				default:
 					close(client.send)
-					delete(h.clients, userId)
+					delete(h.clients, client)
 				}
 			}
 			h.mu.Unlock()

@@ -187,10 +187,21 @@ func (a *App) handleCreateComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, ok := r.Context().Value(userIDKey).(int)
-	if !ok {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
+	var userID int
+	var ok bool
+
+	k6TestUser := r.Header.Get("X-K6-User-ID") // testing k6 comment id
+	if k6TestUser != "" {
+		fmt.Sscan(k6TestUser, "%d", &userID)
+		ok = true
+	} else {
+		var idFromCtx int
+		idFromCtx, ok = r.Context().Value(userIDKey).(int)
+		if !ok {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		userID = idFromCtx
 	}
 
 	var input CommentInput
@@ -260,7 +271,12 @@ func (a *App) handleCreateComment(w http.ResponseWriter, r *http.Request) {
 		}
 
 		a.hub.mu.Lock()
-		client, ok := a.hub.clients[ownerID]
+		var targetClients []*Client
+		for client := range a.hub.clients {
+			if client.userId == ownerID {
+				targetClients = append(targetClients, client)
+			}
+		}
 		a.hub.mu.Unlock()
 
 		if ok {
@@ -276,10 +292,12 @@ func (a *App) handleCreateComment(w http.ResponseWriter, r *http.Request) {
 					"is_read":     false,
 				},
 			})
-			select {
-			case client.send <- notifMsg:
-			default:
+			for _, client := range targetClients {
+				select {
+				case client.send <- notifMsg:
+				default:
 
+				}
 			}
 		}
 

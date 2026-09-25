@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"log"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -13,7 +14,48 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
+	"golang.org/x/time/rate"
 )
+
+type ClientManager struct {
+	mu      sync.RWMutex
+	clients map[string]*rate.Limiter
+}
+
+var manager = &ClientManager{
+	clients: make(map[string]*rate.Limiter),
+}
+
+func (cm *ClientManager) getLimiter(ip string) *rate.Limiter {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+
+	limiter, exists := cm.clients[ip]
+	if !exists {
+		limiter = rate.NewLimiter(rate.Every(time.Second/5), 10)
+		cm.clients[ip] = limiter
+	}
+	return limiter
+}
+
+func RateLimitMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ip, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			ip = r.RemoteAddr
+		}
+
+		limiter := manager.getLimiter(ip)
+
+		if !limiter.Allow() {
+			w.Header().Set("Retry-After", "1")
+			http.Error(w, "Too Many Request - Slow down!", http.StatusTooManyRequests)
+			return
+		}
+
+		next(w, r)
+	}
+}
 
 type App struct {
 	DB          *sql.DB
@@ -50,13 +92,13 @@ func main() {
 
 	mux.HandleFunc("GET /api/health", app.handleHealthCheck)
 	mux.HandleFunc("POST /api/register", app.handleRegister)
-	mux.HandleFunc("POST /api/login", app.handleLogin)
+	mux.HandleFunc("POST /api/login", RateLimitMiddleware(app.handleLogin))
 	mux.HandleFunc("POST /api/refresh", app.handleRefresh)
 	mux.HandleFunc("POST /api/viewer", app.handleViewerMode)
 
 	mux.HandleFunc("POST /api/arguments", app.authMiddleware(app.handleCreateArgument))
 	mux.HandleFunc("GET /api/arguments", app.handleGetArguments)
-	mux.HandleFunc("POST /api/comments", app.authMiddleware(app.handleCreateComment))
+	mux.HandleFunc("POST /api/comments", RateLimitMiddleware(app.authMiddleware(app.handleCreateComment)))
 
 	mux.HandleFunc("/ws", app.WebSocketHandler)
 
@@ -126,7 +168,16 @@ func main() {
 
 	configuration := config.Load()
 	log.Printf("Server running on port %s..\n", configuration.Port)
-	if serverError := http.ListenAndServe(":"+configuration.Port, handler); serverError != nil {
+
+	srv := &http.Server{
+		Addr:         ":" + configuration.Port,
+		Handler:      handler,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	if serverError := srv.ListenAndServe(); serverError != nil {
 		log.Fatalf("Server failed to start: %v", serverError)
 	}
 }
