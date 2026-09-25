@@ -1,0 +1,46 @@
+  █ THRESHOLDS 
+
+    http_req_failed
+    ✗ 'rate<0.05' rate=99.53%
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 644475 3637.736569/s
+    checks_succeeded...: 0.27%  1762 out of 644475
+    checks_failed......: 99.72% 642713 out of 644475
+
+    ✗ logged in
+      ↳  0% — ✓ 92 / ✗ 638258
+    ✗ created argument successfully
+      ↳  44% — ✓ 539 / ✗ 686
+    ✗ fetched arguments successfully
+      ↳  23% — ✓ 285 / ✗ 940
+    ✗ fetched comments successfully
+      ↳  23% — ✓ 282 / ✗ 943
+    ✗ posted comment successfully
+      ↳  5% — ✓ 66 / ✗ 1159
+    ✗ fire reaction processed
+      ↳  40% — ✓ 498 / ✗ 727
+
+    HTTP
+    http_req_duration..............: avg=26.7ms   min=0s       med=6.13ms   max=5.21s  p(90)=15.88ms  p(95)=21.12ms 
+      { expected_response:true }...: avg=161.09ms min=0s       med=17.57ms  max=3.18s  p(90)=410.25ms p(95)=891.91ms
+    http_req_failed................: 99.53% 642792 out of 645804
+    http_reqs......................: 645804 3645.238104/s
+
+    EXECUTION
+    iteration_duration.............: avg=30.29ms  min=0s       med=6.4ms    max=16.36s p(90)=16.18ms  p(95)=21.2ms  
+    iterations.....................: 639483 3609.559245/s
+    vus............................: 1      min=0                max=250
+    vus_max........................: 250    min=250              max=250
+
+    NETWORK
+    data_received..................: 288 MB 1.6 MB/s
+    data_sent......................: 135 MB 763 kB/s
+
+    WEBSOCKET
+    ws_connecting..................: avg=35.42ms  min=514.4µs  med=8.6ms    max=1.25s  p(90)=58.16ms  p(95)=125.72ms
+    ws_msgs_received...............: 4428   24.993828/s
+    ws_session_duration............: avg=353.61ms min=300.62ms med=316.88ms max=1.75s  p(90)=430.3ms  p(95)=500.06ms
+    ws_sessions....................: 1225   6.914508/s
