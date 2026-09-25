@@ -8,3 +8,5 @@ CREATE TABLE IF NOT EXISTS arguments (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE INDEX IF NOT EXISTS idx_get_argument ON arguments(created_at);
+CREATE INDEX IF NOT EXISTS idx_argument_logic_score ON arguments(logic_score DESC);

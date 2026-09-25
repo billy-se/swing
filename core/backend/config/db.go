@@ -29,8 +29,8 @@ func ConnectDatabase() *sql.DB {
 		log.Fatalf("Failed to open Database: %v", err)
 	}
 
-	DB.SetMaxOpenConns(100)
-	DB.SetMaxIdleConns(50)
+	DB.SetMaxOpenConns(25)
+	DB.SetMaxIdleConns(10)
 	DB.SetConnMaxLifetime(5 * time.Minute)
 
 	err = DB.Ping()

@@ -9,3 +9,5 @@ CREATE TABLE IF NOT EXISTS comments(
     is_fire_triggered BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX IF NOT EXISTS idx_comments_argument ON comments(argument_id, created_at ASC);

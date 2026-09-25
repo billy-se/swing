@@ -8,3 +8,5 @@ CREATE TABLE IF NOT EXISTS notif (
     content TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX IF NOT EXISTS idx_get_notif ON notif(user_id, created_at DESC);

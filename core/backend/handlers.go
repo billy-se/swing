@@ -279,7 +279,7 @@ func (a *App) handleRefreshToken(w http.ResponseWriter, r *http.Request) {
 	refreshToken := cookie.Value
 
 	var expiresAt time.Time
-	query := "SELECT user_id, expires_at FROM refresh_tokens WHERE token_hash = $1"
+	query := "SELECT user_id, expires_at FROM sessions WHERE token_hash = $1"
 	err = a.DB.QueryRow(query, refreshToken).Scan(&userID, &expiresAt)
 
 	if err == sql.ErrNoRows || time.Now().After(expiresAt) {
@@ -332,14 +332,6 @@ func (a *App) handleHealthCheck(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("Engine: online, DB: connected"))
-}
-
-func cleanJSONResponse(input string) string {
-	input = strings.TrimSpace(input)
-	input = strings.TrimPrefix(input, "```json")
-	input = strings.TrimPrefix(input, "```")
-	input = strings.TrimSuffix(input, "```")
-	return strings.TrimSpace(input)
 }
 
 func (a *App) handleGetProfile(w http.ResponseWriter, r *http.Request) {
@@ -398,17 +390,12 @@ var w2 = []string{"Peak", "Jar", "Ink", "Leap", "Up"}
 
 func generateNames() string {
 
-	w1 = []string{"Mine", "Spare", "South", "Hum", "Rode"}
-	w2 = []string{"Peak", "Jar", "Ink", "Leap", "Up"}
-
-	random := rand.New(rand.NewSource(time.Now().UnixNano()))
-	wo1 := w1[random.Intn(len(w1))]
-	wo2 := w2[random.Intn(len(w2))]
-	//randomNum := random.Intn(900) + 100
+	wo1 := w1[rand.Intn(len(w1))]
+	wo2 := w2[rand.Intn(len(w2))]
 
 	suffix, err := gonanoid.Generate("abcdefghijklmnopqrstuvwxyz0123456789", 4)
 	if err != nil {
-		suffix = fmt.Sprintf("%d", random.Intn(9000)+1000)
+		suffix = fmt.Sprintf("%d", rand.Intn(9000)+1000)
 	}
 
 	return fmt.Sprintf("%s%s%s", wo1, wo2, suffix)
@@ -443,8 +430,50 @@ func (a *App) handleRegister(w http.ResponseWriter, r *http.Request) {
 
 	var existingID int
 	err = a.DB.QueryRow("SELECT id FROM users WHERE email_hash = $1", decryptEmail).Scan(&existingID)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		secureEmail, err := utils.AesGo(input.Email)
+		if err != nil {
+			log.Printf("Email AES error: %v", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		hashedPassword, err := utils.HashPassword(input.Password)
+		if err != nil {
+			log.Printf("Password hashing error: %v", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		name := generateNames()
+
+		var defaultScore = 1000
+
+		query := `INSERT INTO users (email, email_hash, password_hash, username, logic_score, role) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, created_at`
+		var id int
+		var createdAt time.Time
+		defaultRole := "user"
+
+		err = a.DB.QueryRow(query, secureEmail, decryptEmail, hashedPassword, name, defaultScore, defaultRole).Scan(&id, &createdAt)
+		if err != nil {
+			log.Printf("Database insert errorrr: %v", err)
+			http.Error(w, "Email might already be taken", http.StatusBadRequest)
+			return
+		}
+
+		fmt.Printf("Created -> Name: %s, ID: %d\n", name, id)
+
+		w.WriteHeader(http.StatusCreated)
+		fmt.Fprintf(w, `{"message": "User registered successfully", "id": %d}`, id)
+		return
+	}
+
 	if err == nil {
 		http.Error(w, "An account with this email already exists", http.StatusConflict)
+		return
+	} else {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
@@ -454,40 +483,6 @@ func (a *App) handleRegister(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}*/
-	secureEmail, err := utils.AesGo(input.Email)
-	if err != nil {
-		log.Printf("Email AES error: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	hashedPassword, err := utils.HashPassword(input.Password)
-	if err != nil {
-		log.Printf("Password hashing error: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	name := generateNames()
-
-	var defaultScore = 1000
-
-	query := `INSERT INTO users (email, email_hash, password_hash, username, logic_score, role) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, created_at`
-	var id int
-	var createdAt time.Time
-	defaultRole := "user"
-
-	err = a.DB.QueryRow(query, secureEmail, decryptEmail, hashedPassword, name, defaultScore, defaultRole).Scan(&id, &createdAt)
-	if err != nil {
-		log.Printf("Database insert errorrr: %v", err)
-		http.Error(w, "Email might already be taken", http.StatusBadRequest)
-		return
-	}
-
-	fmt.Printf("Created -> Name: %s, ID: %d\n", name, id)
-
-	w.WriteHeader(http.StatusCreated)
-	fmt.Fprintf(w, `{"message": "User registered successfully", "id": %d}`, id)
 }
 
 func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {

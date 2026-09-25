@@ -5,3 +5,5 @@ CREATE TABLE IF NOT EXISTS watchlist (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (user_id, argument_id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_watchlist ON watchlist(user_id, argument_id);

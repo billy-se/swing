@@ -364,13 +364,13 @@ func (a *App) handleGetComments(w http.ResponseWriter, r *http.Request) {
 	}
 
 	query := `SELECT c.id, c.content, c.user_id, c.argument_id, c.score, c.is_fire_triggered, c.parent_id,
-	COUNT(cr.id) AS fire_count,
-	BOOL_OR(cr.user_id = $2 AND cr.reaction_type = 'fire') AS  user_has_fired
-	FROM comments c
-	LEFT JOIN comment_reactions cr ON cr.comment_id = c.id AND cr.reaction_type = 'fire'
-	WHERE c.argument_id = $1
-	GROUP BY c.id
-	ORDER BY c.created_at ASC`
+    COUNT(cr.id) AS fire_count,
+    COALESCE(BOOL_OR(cr.user_id = $2 AND cr.reaction_type = 'fire'), false) AS user_has_fired
+    FROM comments c
+    LEFT JOIN comment_reactions cr ON cr.comment_id = c.id AND cr.reaction_type = 'fire'
+    WHERE c.argument_id = $1
+    GROUP BY c.id
+    ORDER BY c.created_at ASC`
 
 	rows, err := a.DB.Query(query, argumentID, currentUserID)
 	if err != nil {
