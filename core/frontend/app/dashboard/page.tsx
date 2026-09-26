@@ -6,6 +6,7 @@ import { ReviewModal } from './reviewModal';
 import { CreateArgumentModal } from './createModal';
 import { api, setMemoryAccessToken, getMemoryAccessToken } from '@/app/dashboard/api';
 import { useRouter } from 'next/navigation';
+import { startTransition } from 'react';
 
 export default function Home() {
     const [isReviewOpen, setIsReviewOpen] = useState(false);
@@ -32,6 +33,8 @@ export default function Home() {
     const [isLoading, setIsLoading] = useState(true);
     const [isAuthInitialized, setIsAuthInitialized] = useState(false); 
 
+    const [cache, setCache] = useState<Record<string, Argument[]>>({});
+
     const mapComments = (commentsList: RawComment[]): Comment[] => {
         if (!Array.isArray(commentsList)) return [];
 
@@ -50,6 +53,11 @@ export default function Home() {
     };
 
     const loadArguments = async () => {
+        if (cache[activeTab]) {
+            setArgumentsList(cache[activeTab]);
+            return;
+        }
+
         try {
             const endpoint = activeTab === 'top'
                 ? '/api/arguments/top' 
@@ -66,7 +74,10 @@ export default function Home() {
                 comments: mapComments(existingArguments.comments || [])
             }));
 
-            setArgumentsList(initializedData);
+            setCache(prev => ({ ...prev, [activeTab]: initializedData }));
+            startTransition(() => {
+                setArgumentsList(initializedData);
+            });
         } catch (err) {
             console.error("Failed to fetch arguments:", err);
         }
@@ -88,6 +99,8 @@ export default function Home() {
                     return arg;
                 })
             );
+
+            setCache({});
         }catch (err) {
             console.error("Failed to toggle watchlist: ", err);
         }

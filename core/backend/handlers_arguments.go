@@ -100,6 +100,24 @@ func (a *App) handleCreateArgument(w http.ResponseWriter, r *http.Request) {
 		}
 	}*/
 
+	ctx := r.Context()
+
+	//_ = a.Redis.Del(ctx, "arguments:feed", "argument:trending").Err()
+
+	feedpattern := "arguments:feed:user:*"
+	iterFeed := a.Redis.Scan(ctx, 0, feedpattern, 0).Iterator()
+	for iterFeed.Next(ctx) {
+		_ = a.Redis.Del(ctx, iterFeed.Val())
+	}
+
+	topPattern := "arguments:top:user:*"
+	iterTop := a.Redis.Scan(ctx, 0, topPattern, 0).Iterator()
+	for iterTop.Next(ctx) {
+		_ = a.Redis.Del(ctx, iterTop.Val())
+	}
+
+	_ = a.Redis.Del(ctx, "argument:trending").Err()
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 
@@ -175,6 +193,18 @@ func (a *App) handleGetArguments(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+	}
+
+	ctx := r.Context()
+
+	cacheKey := fmt.Sprintf("arguments:feed:user:%d", currentUserID)
+
+	cachedData, err := a.Redis.Get(ctx, cacheKey).Bytes()
+	if err == nil && len(cachedData) > 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write(cachedData)
+		return
 	}
 
 	query := `
@@ -321,8 +351,19 @@ func (a *App) handleGetArguments(w http.ResponseWriter, r *http.Request) {
 		arguments = []ArgumentResponse{}
 	}
 
+	responseBytes, err := json.Marshal(arguments)
+	if err != nil {
+		log.Printf("JSON marshal error: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	_ = a.Redis.Set(ctx, cacheKey, responseBytes, 60*time.Second).Err()
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(arguments)
+	w.WriteHeader(http.StatusOK)
+	w.Write(responseBytes)
+	//json.NewEncoder(w).Encode(arguments)
 }
 
 func (a *App) handleTopArguments(w http.ResponseWriter, r *http.Request) {
@@ -342,6 +383,18 @@ func (a *App) handleTopArguments(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+	}
+
+	ctx := r.Context()
+
+	cacheKey := fmt.Sprintf("arguments:top:user:%d", currentUserID)
+
+	cachedData, err := a.Redis.Get(ctx, cacheKey).Bytes()
+	if err == nil && len(cachedData) > 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write(cachedData)
+		return
 	}
 
 	query := `
@@ -487,8 +540,19 @@ func (a *App) handleTopArguments(w http.ResponseWriter, r *http.Request) {
 		arguments = []ArgumentResponse{}
 	}
 
+	responseBytes, err := json.Marshal(arguments)
+	if err != nil {
+		log.Printf("JSON marshal error: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	_ = a.Redis.Set(ctx, cacheKey, responseBytes, 60*time.Second).Err()
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(arguments)
+	w.WriteHeader(http.StatusOK)
+	w.Write(responseBytes)
+	//json.NewEncoder(w).Encode(arguments)
 }
 
 func (a *App) handleCreateWatchlist(w http.ResponseWriter, r *http.Request) {
@@ -557,6 +621,15 @@ func (a *App) handleCreateWatchlist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx := r.Context()
+
+	_ = a.Redis.Del(ctx,
+		fmt.Sprintf("arguments:feed:user:%d", userID),
+		fmt.Sprintf("arguments:top:user:%d", userID),
+		fmt.Sprintf("arguments:watchlist:user:%d", userID),
+		fmt.Sprintf("argument:detail:%d", req.ArgumentID),
+	).Err()
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"status": actionStatus,
@@ -585,6 +658,18 @@ func (a *App) handleGetWatchlist(w http.ResponseWriter, r *http.Request) {
 		userID = int64(v)
 	default:
 		http.Error(w, "Invalid user context", http.StatusUnauthorized)
+		return
+	}
+
+	ctx := r.Context()
+
+	cacheKey := fmt.Sprintf("arguments:watchlist:user:%d", userID)
+
+	cachedData, err := a.Redis.Get(ctx, cacheKey).Bytes()
+	if err == nil && len(cachedData) > 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write(cachedData)
 		return
 	}
 
@@ -729,6 +814,17 @@ func (a *App) handleGetWatchlist(w http.ResponseWriter, r *http.Request) {
 		arguments = []ArgumentResponse{}
 	}
 
+	responseBytes, err := json.Marshal(arguments)
+	if err != nil {
+		log.Printf("JSON marshal error: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	_ = a.Redis.Set(ctx, cacheKey, responseBytes, 60*time.Second).Err()
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(arguments)
+	w.WriteHeader(http.StatusOK)
+	w.Write(responseBytes)
+	//json.NewEncoder(w).Encode(arguments)
 }

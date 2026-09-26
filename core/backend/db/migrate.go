@@ -24,9 +24,9 @@ func RunMigrations(db *sql.DB) {
 		log.Fatalf("Migration failed to initialize: %v", err)
 	}
 
-	if err := m.Force(8); err != nil {
+	/*if err := m.Force(8); err != nil {
 		log.Fatalf("Failed to force migration version: %v", err)
-	}
+	}*/
 
 	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
 		log.Fatalf("An error occured while running migrations: %v", err)

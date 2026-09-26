@@ -158,6 +158,37 @@ func (a *App) handleFireReaction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx := r.Context()
+
+	argumentCacheKey := fmt.Sprintf("argument:detail:%d", argumentID)
+	_ = a.Redis.Del(ctx, argumentCacheKey).Err()
+
+	pattern := fmt.Sprintf("comments:argument:%d:user:*", argumentID)
+	iter := a.Redis.Scan(ctx, 0, pattern, 0).Iterator()
+	for iter.Next(ctx) {
+		_ = a.Redis.Del(ctx, iter.Val())
+	}
+
+	feedPattern := "arguments:feed:user:*"
+	iterFeed := a.Redis.Scan(ctx, 0, feedPattern, 0).Iterator()
+	for iterFeed.Next(ctx) {
+		_ = a.Redis.Del(ctx, iterFeed.Val())
+	}
+
+	topPattern := "arguments:top:user:*"
+	iterTop := a.Redis.Scan(ctx, 0, topPattern, 0).Iterator()
+	for iterTop.Next(ctx) {
+		_ = a.Redis.Del(ctx, iterTop.Val())
+	}
+
+	watchlistPattern := "arguments:watchlist:user:*"
+	iterWatchlist := a.Redis.Scan(ctx, 0, watchlistPattern, 0).Iterator()
+	for iterWatchlist.Next(ctx) {
+		_ = a.Redis.Del(ctx, iterWatchlist.Val())
+	}
+	/*commentsCacheKey := fmt.Sprintf("arguments:argument:%d", argumentID)
+	_ = a.Redis.Del(ctx, commentsCacheKey).Err()*/
+
 	var newFireCount int
 	a.DB.QueryRow(`SELECT COUNT(*) FROM comment_reactions WHERE comment_id = $1 AND reaction_type = 'fire'`, req.CommentID).Scan(&newFireCount)
 
@@ -326,6 +357,25 @@ func (a *App) handleCreateComment(w http.ResponseWriter, r *http.Request) {
 	}
 	a.hub.broadcast <- msg
 
+	ctx := r.Context()
+
+	argumentCacheKey := fmt.Sprintf("argument:detail:%d", input.ArgumentID)
+	_ = a.Redis.Del(ctx, argumentCacheKey).Err()
+
+	pattern := fmt.Sprintf("comments:argument:%d:user:*", input.ArgumentID)
+	iter := a.Redis.Scan(ctx, 0, pattern, 0).Iterator()
+	for iter.Next(ctx) {
+		_ = a.Redis.Del(ctx, iter.Val())
+	}
+
+	/*commentsCacheKey := fmt.Sprintf("arguments:argument:%d", input.ArgumentID)
+	_ = a.Redis.Del(ctx, argumentCacheKey, commentsCacheKey).Err()*/
+
+	if ownerID > 0 && ownerID != userID {
+		notifCacheKey := fmt.Sprintf("user:notifications:%d", ownerID)
+		_ = a.Redis.Del(ctx, notifCacheKey).Err()
+	}
+
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"message":    "Comment saved",
@@ -361,6 +411,18 @@ func (a *App) handleGetComments(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+	}
+
+	ctx := r.Context()
+
+	cacheKey := fmt.Sprintf("comments:argument:%d:user:%d", argumentID, currentUserID)
+
+	cachedData, err := a.Redis.Get(ctx, cacheKey).Bytes()
+	if err == nil && len(cachedData) > 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write(cachedData)
+		return
 	}
 
 	query := `SELECT c.id, c.content, c.user_id, c.argument_id, c.score, c.is_fire_triggered, c.parent_id,
@@ -406,6 +468,16 @@ func (a *App) handleGetComments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	responseBytes, err := json.Marshal(comments)
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	_ = a.Redis.Set(ctx, cacheKey, responseBytes, 60*time.Second).Err()
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(comments)
+	w.WriteHeader(http.StatusOK)
+	w.Write(responseBytes)
+	//json.NewEncoder(w).Encode(comments)
 }

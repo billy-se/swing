@@ -2,13 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
-	"math/rand"
 	"net/http"
 	"os"
 	"strings"
@@ -18,6 +18,8 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/golang-jwt/jwt/v5"
+
+	mrand "math/rand/v2"
 
 	gonanoid "github.com/matoous/go-nanoid/v2"
 )
@@ -77,8 +79,7 @@ func (a *App) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 }*/
 
 func (a *App) parseToken(tokenString string) (jwt.MapClaims, error) {
-	jwtParseSigningKey := os.Getenv("JWT_ACCESS")
-	if jwtParseSigningKey == "" {
+	if a.JwtAccessSecret == "" {
 		return nil, errors.New("[parseToken]: JWT_ACCESS environment variable is missing")
 	}
 
@@ -86,7 +87,7 @@ func (a *App) parseToken(tokenString string) (jwt.MapClaims, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method")
 		}
-		return []byte(jwtParseSigningKey), nil
+		return []byte(a.JwtAccessSecret), nil
 	})
 	if err != nil {
 		fmt.Println("[parseToken]: JWT Parse Error Details:", err)
@@ -390,12 +391,12 @@ var w2 = []string{"Peak", "Jar", "Ink", "Leap", "Up"}
 
 func generateNames() string {
 
-	wo1 := w1[rand.Intn(len(w1))]
-	wo2 := w2[rand.Intn(len(w2))]
+	wo1 := w1[mrand.IntN(len(w1))]
+	wo2 := w2[mrand.IntN(len(w2))]
 
 	suffix, err := gonanoid.Generate("abcdefghijklmnopqrstuvwxyz0123456789", 4)
 	if err != nil {
-		suffix = fmt.Sprintf("%d", rand.Intn(9000)+1000)
+		suffix = fmt.Sprintf("%d", mrand.IntN(9000)+1000)
 	}
 
 	return fmt.Sprintf("%s%s%s", wo1, wo2, suffix)
@@ -506,17 +507,24 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 	email := strings.ToLower(strings.TrimSpace(creds.Email))
 	decryptEmail := utils.GenerateBlindIndex(email, []byte(os.Getenv("keyAesGo")))
 
+	ctx1, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
 	//var username string
 	var user User
 	query := "SELECT id, email, password_hash, username, role FROM users WHERE email_hash = $1"
 
 	//creds.Email
-	err = a.DB.QueryRow(query, decryptEmail).Scan(&user.Id, &user.Email, &user.HashedPassword, &user.Username, &user.Role)
+	err = a.DB.QueryRowContext(ctx1, query, decryptEmail).Scan(&user.Id, &user.Email, &user.HashedPassword, &user.Username, &user.Role)
 
-	if err == sql.ErrNoRows {
-		http.Error(w, "Invalid username or password", http.StatusUnauthorized)
-		return
-	} else if err != nil {
+	if err != nil {
+		if ctx1.Err() == context.DeadlineExceeded {
+			http.Error(w, "Request timed out, please try again", http.StatusGatewayTimeout)
+			return
+		}
+		if err == sql.ErrNoRows {
+			http.Error(w, "Invalid username or password", http.StatusUnauthorized)
+			return
+		}
 		fmt.Println("DB Error: ", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
@@ -530,7 +538,19 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Printf("In -> Name: %s, ID: %d\n", user.Username, user.Id)
 
-	var activeSessionCount int
+	//under construnction
+
+	var ctx = context.Background()
+
+	activeSession := fmt.Sprintf("presence:user:%d", user.Id)
+
+	val, err := a.Redis.Get(ctx, activeSession).Result()
+	if err == nil && val != "" {
+		http.Error(w, "Someone is using this account", http.StatusConflict)
+		return
+	}
+
+	/*var activeSessionCount int //redis here
 	err = a.DB.QueryRow(
 		"SELECT COUNT(*) FROM sessions WHERE user_id = $1 AND expires_at > NOW() AND last_seen > NOW() - INTERVAL '30 seconds'",
 		user.Id,
@@ -539,12 +559,12 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if activeSessionCount > 0 {
 		http.Error(w, "Someone is using this account", http.StatusConflict)
 		return
-	}
+	}*/
 
-	_, err = a.DB.Exec("DELETE FROM sessions WHERE user_id = $1 AND last_seen <= NOW() - INTERVAL '30 seconds'", user.Id)
+	/*_, err = a.DB.Exec("DELETE FROM sessions WHERE user_id = $1 AND last_seen <= NOW() - INTERVAL '30 seconds'", user.Id)
 	if err != nil {
 		log.Println("Failed to clear stale sessions:", err)
-	}
+	}*/
 
 	//generate short-lived access token
 	accessToken, err := generateAccessToken(user.Id, user.Username)
@@ -564,8 +584,23 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	expiresAt := time.Now().Add(time.Hour * 24 * 7)
-	_, err = a.DB.Exec(
+	refreshKey := fmt.Sprintf("session:refresh:%d", user.Id)
+	expiresAt := time.Now().Add(time.Hour * 24 * 7) //redis here
+
+	err = a.Redis.Set(ctx, refreshKey, refreshToken, time.Hour*24*7).Err()
+	if err != nil {
+		log.Println("Redis error saving session:", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	err = a.Redis.Set(ctx, activeSession, "active", time.Second*30).Err()
+	if err != nil {
+		log.Println("Redis error setting presense")
+		return
+	}
+
+	/*_, err = a.DB.Exec(
 		"INSERT INTO sessions (user_id, token_hash, expires_at) VALUES ($1, $2, $3)",
 		user.Id, refreshToken, expiresAt,
 	)
@@ -573,7 +608,7 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		log.Println("Database error saving refresh token:", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
-	}
+	}*/
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     "refresh_token_swing",
@@ -614,12 +649,37 @@ func (a *App) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = a.DB.Exec("UPDATE sessions SET last_seen = NOW() WHERE token_hash = $1", cookie.Value)
+	claims, err := a.parseToken(cookie.Value)
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var userId int
+	if userIdFloat, ok := claims["user_id"].(float64); ok {
+		userId = int(userIdFloat)
+	} else {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var ctx = r.Context()
+
+	activeSession := fmt.Sprintf("presence:user:%d", userId)
+
+	err = a.Redis.Set(ctx, activeSession, "active", time.Second*30).Err()
+	if err != nil {
+		log.Println("Redis heartbeat error:", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	/*_, err = a.DB.Exec("UPDATE sessions SET last_seen = NOW() WHERE token_hash = $1", cookie.Value)
 	if err != nil {
 		log.Println("Heartbeat DB Error:", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
-	}
+	}*/
 
 	w.WriteHeader(http.StatusOK)
 }
@@ -785,6 +845,18 @@ func (a *App) handleGetNotifications(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	//under constructiom
+	ctx := r.Context()
+	cacheKey := fmt.Sprintf("user:notifications:%d", userID)
+
+	cacheData, err := a.Redis.Get(ctx, cacheKey).Bytes()
+	if err == nil && len(cacheData) > 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write(cacheData)
+		return
+	}
+
 	rows, err := a.DB.Query(`SELECT id, argument_id, comment_id, type, content, created_at, is_read FROM notif WHERE user_id = $1 ORDER BY created_at DESC LIMIT 20`, userID)
 	if err != nil {
 		http.Error(w, "Failed to fetch notifications", http.StatusInternalServerError)
@@ -829,10 +901,23 @@ func (a *App) handleGetNotifications(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	responsePayload := map[string]interface{}{
 		"notifications": notifications,
-	})
+	}
+
+	responseBytes, err := json.Marshal(responsePayload)
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	_ = a.Redis.Set(ctx, cacheKey, responseBytes, 60*time.Second).Err()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(responseBytes)
+	/*json.NewEncoder(w).Encode(map[string]interface{}{
+		"notifications": notifications,
+	})*/
 }
 
 func (a *App) handleMarkNotificationRead(w http.ResponseWriter, r *http.Request) {
@@ -848,11 +933,16 @@ func (a *App) handleMarkNotificationRead(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	ctx := r.Context()
+
 	_, err := a.DB.Exec(`UPDATE notif SET is_read = TRUE WHERE id = $1 AND user_id = $2`, notifID, userID)
 	if err != nil {
 		http.Error(w, "Failed to update notification", http.StatusInternalServerError)
 		return
 	}
+
+	cacheKey := fmt.Sprintf("user:notifications:%d", userID)
+	_ = a.Redis.Del(ctx, cacheKey).Err()
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"message": "Marked as read"})
@@ -921,18 +1011,40 @@ func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx := r.Context()
 	userID, ok := r.Context().Value(userIDKey).(int)
-	if ok && userID > 0 {
-		_, err := a.DB.Exec("DELETE FROM sessions WHERE user_id = $1", userID)
+
+	if !ok || userID <= 0 {
+		cookie, err := r.Cookie("refresh_token_swing")
+		if err == nil && cookie.Value != "" {
+			claims, err := a.parseToken(cookie.Value)
+			if err == nil {
+				if userIdFloat, ok := claims["user_id"].(float64); ok {
+					userID = int(userIdFloat)
+				}
+			}
+		}
+	}
+
+	if userID > 0 {
+		presenceKey := fmt.Sprintf("presence:user:%d", userID)
+		refreshKey := fmt.Sprintf("session:refresh:%d", userID)
+
+		err := a.Redis.Del(ctx, presenceKey, refreshKey).Err()
+		if err != nil {
+			log.Println("Redis error clearing session on logout:", err)
+		}
+
+		/*_, err := a.DB.Exec("DELETE FROM sessions WHERE user_id = $1", userID)
 		if err != nil {
 			log.Println("Database error clearing sessions on logout:", err)
-		}
-	} else {
+		}*/
+	} /* else {
 		cookie, err := r.Cookie("refresh_token_swing")
 		if err == nil {
 			a.DB.Exec("DELETE FROM sessions WHERE token_hash = $1", cookie.Value)
 		}
-	}
+	}*/
 
 	claims, ok := r.Context().Value(claimsKey).(jwt.MapClaims)
 

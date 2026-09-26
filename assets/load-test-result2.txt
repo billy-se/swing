@@ -1,0 +1,46 @@
+k6-1  |   █ THRESHOLDS 
+k6-1  | 
+k6-1  |     http_req_failed
+k6-1  |     ✓ 'rate<0.20' rate=18.25%
+k6-1  | 
+k6-1  | 
+k6-1  |   █ TOTAL RESULTS 
+k6-1  | 
+k6-1  |     checks_total.......: 2638    21.142751/s
+k6-1  |     checks_succeeded...: 100.00% 2638 out of 2638
+k6-1  |     checks_failed......: 0.00%   0 out of 2638
+k6-1  | 
+k6-1  |     ✓ logged in
+k6-1  |     ✓ created argument successfully
+k6-1  |     ✓ fetched arguments successfully
+k6-1  |     ✓ posted comment successfully
+k6-1  |     ✓ fire reaction processed
+k6-1  |     ✓ fetched comments successfully
+k6-1  | 
+k6-1  |     HTTP
+k6-1  |     http_req_duration..............: avg=48.25ms  min=127.14µs med=5.17ms   max=745.62ms p(90)=169.13ms p(95)=331.39ms
+k6-1  |       { expected_response:true }...: avg=58.76ms  min=127.14µs med=6.96ms   max=745.62ms p(90)=229.95ms p(95)=354.74ms
+k6-1  |     http_req_failed................: 18.25% 597 out of 3270
+k6-1  |     http_reqs......................: 3270   26.208035/s
+k6-1  | 
+k6-1  |     EXECUTION
+k6-1  |     iteration_duration.............: avg=4.56s    min=4.32s    med=4.53s    max=5.1s     p(90)=4.81s    p(95)=4.89s   
+k6-1  |     iterations.....................: 597    4.78477/s
+k6-1  |     vus............................: 1      min=0           max=50
+k6-1  |     vus_max........................: 50     min=50          max=50
+k6-1  | 
+k6-1  |     NETWORK
+k6-1  |     data_received..................: 75 MB  598 kB/s
+k6-1  |     data_sent......................: 1.4 MB 11 kB/s
+k6-1  | 
+k6-1  |     WEBSOCKET
+k6-1  |     ws_connecting..................: avg=657.1µs  min=190.25µs med=523.32µs max=5.9ms    p(90)=1.05ms   p(95)=1.23ms  
+k6-1  |     ws_msgs_received...............: 2435   19.515769/s
+k6-1  |     ws_session_duration............: avg=301.66ms min=300.42ms med=301.52ms max=315.27ms p(90)=302.3ms  p(95)=302.59ms
+k6-1  |     ws_sessions....................: 597    4.78477/s
+k6-1  | 
+k6-1  | 
+k6-1  | 
+k6-1  | 
+k6-1  | running (2m04.8s), 00/50 VUs, 597 complete and 0 interrupted iterations
+k6-1  | target_ceiling_test ✓ [ 100% ] 00/50 VUs  2m0s

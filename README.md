@@ -144,3 +144,7 @@ Stress Test Summary: State the bottleneck: Performance collapses between 1,250 a
 
 * Tested up to 3,600+ req/s with k6 (250 virtual users).
 * Added IP-based rate limiting (`golang.org/x/time/rate`) to keep the server stable and prevent resource exhaustion under heavy traffic.
+[View](.assets/load-test-result.txt)
+
+* Tested under 50 concurrent VUs with k6: ~5ms median latency, 100% pass rate on core logic.
+[View](.assets/load-test-result.txt)

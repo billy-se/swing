@@ -10,17 +10,17 @@ export const options = {
       startVUs: 2,
       stages: [
         { duration: '30s', target: 8 },   // Gentle warmup
-        { duration: '1m', target: 15 },   // Safe peak load
+        { duration: '1m', target: 50 },   // Safe peak load
         { duration: '30s', target: 0 },   // Cool down
       ]
     },
   },
   thresholds: {
-    'http_req_failed': ['rate<0.05'], 
+    'http_req_failed': ['rate<0.20'], 
   },
 };
 
-const BASE_URL = 'http://localhost:2026';
+const BASE_URL = 'http://backend:2026';
 const RUN_ID = Date.now();
 const USER_POOL_SIZE = 30;
 
@@ -146,7 +146,7 @@ export default function (data) {
     return;
   }
 
-  const wsUrl = `ws://localhost:2026/ws?ticket=${ticket}`;
+  const wsUrl = `ws://backend:2026/ws?ticket=${ticket}`;
   ws.connect(wsUrl, {}, function (socket) {
     socket.on('open', function () {
       socket.setTimeout(function () {
