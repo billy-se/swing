@@ -35,6 +35,12 @@ export default function Home() {
 
     const [cache, setCache] = useState<Record<string, Argument[]>>({});
 
+    const [page, setPage] = useState(1);
+    const [hasMore, setHasMore] = useState(true);
+    const [isLoadingList, setIsLoadingList] = useState(false);
+    const [isLoadingMore, setIsLoadingMore] = useState(false);
+    const LIMIT = 20;
+
     const mapComments = (commentsList: RawComment[]): Comment[] => {
         if (!Array.isArray(commentsList)) return [];
 
@@ -52,34 +58,70 @@ export default function Home() {
         return mapped.reverse();
     };
 
-    const loadArguments = async () => {
-        if (cache[activeTab]) {
+    const loadArguments = async (reset = false) => {
+        const targetPage = reset ? 1 : page;
+
+        if (!reset && !hasMore) return;
+
+
+        if (reset && cache[activeTab]) {
             setArgumentsList(cache[activeTab]);
+            setPage(2);
             return;
         }
 
         try {
+            if (reset) {
+                setIsLoadingList(true);
+            } else {
+                setIsLoadingMore(true);
+            }
+
             const endpoint = activeTab === 'top'
-                ? '/api/arguments/top' 
+                ? `/api/arguments/top?page=${targetPage}&limit=${LIMIT}`
                 : activeTab === 'watchlist'
-                    ? '/api/watchlist'
-                    : '/api/arguments';
+                    ? `/api/watchlist?page=${targetPage}&limit=${LIMIT}`
+                    : `/api/arguments?page=${targetPage}&limit=${LIMIT}`;
 
             const res = await api.get(endpoint);
             const data = res.data;
-            if (!Array.isArray(data)) return;
 
-            const initializedData = data.map((existingArguments: Argument) => ({
+            const items = Array.isArray(data) ? data : (data.arguments || data.watchlist || []);
+            //if (!Array.isArray(data)) return;
+            if (items.length < LIMIT) setHasMore(false);
+
+            const initializedData = items.map((existingArguments: Argument) => ({
                 ...existingArguments,
                 comments: mapComments(existingArguments.comments || [])
             }));
 
-            setCache(prev => ({ ...prev, [activeTab]: initializedData }));
+            setArgumentsList(prevList => {
+                if (reset || targetPage === 1) {
+                    return initializedData;
+                }
+
+                const existingIds = new Set(prevList.map(item => item.id));
+                const uniqueNewItems = initializedData.filter((item: Argument) => !existingIds.has(item.id));
+                return [...prevList, ...uniqueNewItems];
+            });
+
+            if (reset) {
+                setPage(2);
+                setCache(prev => ({ ...prev, [activeTab]: initializedData }));
+            } else {
+                setPage(prev => prev+1);
+            }
+
+            /*setCache(prev => ({ ...prev, [activeTab]: initializedData }));
             startTransition(() => {
                 setArgumentsList(initializedData);
-            });
+            });*/
         } catch (err) {
             console.error("Failed to fetch arguments:", err);
+        } finally {
+            setIsLoading(false);
+            setIsLoadingList(false);
+            setIsLoadingMore(false);
         }
     };
 
@@ -153,12 +195,16 @@ export default function Home() {
         
         window.location.href = '/login'; 
     };*/
+    const hasInitialized = useRef(false);
 
     useEffect(() => {
         if (ws.current && (ws.current.readyState === WebSocket.OPEN || ws.current.readyState === WebSocket.CONNECTING)) return;
+        if (hasInitialized.current) return;
+        hasInitialized.current = true;
 
         let socket: WebSocket | null = null;
         let isMounted = true;
+        let reconnectTimeout: NodeJS.Timeout;
 
         const initializeConnection = async () => {
 
@@ -185,8 +231,20 @@ export default function Home() {
                     const refreshRes = await api.post('/api/refresh');
                     token = refreshRes.data.access_token;
                     setMemoryAccessToken(token);
-                } catch (err) {
-                    console.log("No active session found. Running as guest");
+
+                    const profileRes = await api.get('/api/user/profile');
+                    setUser(profileRes.data);
+                } catch (err: any) {
+
+                    if (err.response && err.response.status === 401) {
+                        setUser(null);
+                        setMemoryAccessToken(null);
+                    } else {
+                        console.warn("Network hiccup during session init, keeping previous state", err);
+                    }
+                    //console.log("No active session found. Running as guest");
+                } finally {
+                    setIsLoading(false);
                 }
             }
 
@@ -212,7 +270,8 @@ export default function Home() {
                 } catch (err) {
                     console.error("Failed to load profile", err);
                     setUser(null);
-                    router.push('/');
+                    //router.push('/');
+                    return;
                 }
             } else {
                 setUser(null);
@@ -220,7 +279,7 @@ export default function Home() {
 
             }
 
-            if (fetchedRole === 'viewer' || !token) {
+            if (fetchedRole !== 'viewer' && !token) {
                 return;
             }
 
@@ -241,6 +300,15 @@ export default function Home() {
 
                 socket.onclose = (event) => {
                     console.warn(`WebSocket Closed! Code: ${event.code}, Reason: ${event.reason}`);
+                    ws.current = null;
+
+                    if (isMounted) {
+                        console.log("Attempting to reconnect Websocket in 3s...");
+                        //clearTimeout(reconnectTimeout);
+                        reconnectTimeout = setTimeout(() => {
+                            initializeConnection();
+                        }, 3000);
+                    }
                 };
 
                 socket.onmessage = (fromServerJson) => {
@@ -360,6 +428,7 @@ export default function Home() {
 
         return () => {
             isMounted = false;
+            clearTimeout(reconnectTimeout);
             document.removeEventListener('mousedown', handleClickOutside);
             if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
                 socket.close(1000, 'User session ended');
@@ -370,7 +439,9 @@ export default function Home() {
 
     useEffect(() => {
         if (!isAuthInitialized) return;
-        loadArguments();
+        setPage(1);
+        setHasMore(true);
+        loadArguments(true);
     },[activeTab, isAuthInitialized]);
 
     const selectedArgument = (argumentsList || []).find((argumentItem) => argumentItem.id === selectedArgumentId) ?? null;
@@ -380,7 +451,7 @@ export default function Home() {
     const currentUsername = user?.username ?? 'GUEST';
     const logicScore = user?.logicScore ?? 0;
 
-    useEffect(() => {
+    useEffect(() => { //under construction
         if (!isLoggedIn || isViewer) return;
 
         const interval = setInterval(async () => {
@@ -389,7 +460,7 @@ export default function Home() {
             } catch (err) {
                 console.error("Heartbeat failed", err);
             }
-        }, 20000);
+        }, 15000);
         return () => clearInterval(interval);
     }, [isLoggedIn, isViewer]);
 
@@ -572,43 +643,60 @@ export default function Home() {
 
                     <div className="flex-1 min-h-0 overflow-y-auto space-y-4 pr-2 pb-6 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
                         {(argumentsList || []).length > 0 ? (
-                        (argumentsList || []).map((check) => (
-                                <div key={check.id} className="bg-zinc-950 border border-zinc-800 rounded-lg p-5 flex flex-col gap-4 hover:border-zinc-700 transition-colors">
-                                <div className="flex justify-between items-center text-[10px] text-zinc-500">
-                                    <span>AUTHOR: [{check.author}]</span>
-                                    {!isViewer && <button 
-                                        onClick={() => handleToggleWatch(check.id)}
-                                        className={`px-2.5 py-1 rounded border text-xs font-medium transition-colors flex items-center gap-1.5 ${
-                                            check.is_watched 
-                                                ? 'bg-emerald-950/50 border-emerald-500/50 text-emerald-400' 
-                                                : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-700'
-                                        }`}
-                                    >
-                                        <span>{check.is_watched ? '★' : '☆'}</span>
-                                    </button>}
-                                </div>
-                                <h2 className="text-sm font-semibold text-zinc-100">
-                                    {check.title}
-                                </h2>
-                                <p className="text-xs text-zinc-400 leading-relaxed whitespace-pre-wrap">
-                                    {check.content}
-                                </p>
-                                <div className="flex justify-between items-center pt-3 border-t border-zinc-900 text-xs">
-                                    <span className="text-emerald-400">Logic Score: +{check.logic_score}</span>
-                                    <button className="bg-zinc-900 hover:bg-zinc-800 text-zinc-200 px-3 py-1 rounded border border-zinc-800 text-xs transition-colors"
-                                        onClick={() => {
-                                            setSelectedArgumentId(check.id);
-                                            setTargetCommentId(null);
-                                            setIsReviewOpen(true);
-                                        }}>
-                                        Review Argument
-                                    </button>
-                                </div>
-                            </div>
-                        ))
-                    ) : activeTab === 'watchlist' ? (<div className="text-xs text-zinc-500 text-center">No Watchlist added yet</div>): 
-                        activeTab === 'top' ? (<div className="text-xs text-zinc-500 text-center">No Argument yet</div>):
-                        (<div className="text-xs text-zinc-500 text-center">No Argument yet</div>
+                            <>
+                                {(argumentsList || []).map((check) => (
+                                    <div key={check.id} className="bg-zinc-950 border border-zinc-800 rounded-lg p-5 flex flex-col gap-4 hover:border-zinc-700 transition-colors">
+                                        <div className="flex justify-between items-center text-[10px] text-zinc-500">
+                                            <span>AUTHOR: [{check.author}]</span>
+                                            {!isViewer && <button 
+                                                onClick={() => handleToggleWatch(check.id)}
+                                                className={`px-2.5 py-1 rounded border text-xs font-medium transition-colors flex items-center gap-1.5 ${
+                                                    check.is_watched 
+                                                        ? 'bg-emerald-950/50 border-emerald-500/50 text-emerald-400' 
+                                                        : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-700'
+                                                }`}
+                                            >
+                                                <span>{check.is_watched ? '★' : '☆'}</span>
+                                            </button>}
+                                        </div>
+                                        <h2 className="text-sm font-semibold text-zinc-100">
+                                            {check.title}
+                                        </h2>
+                                        <p className="text-xs text-zinc-400 leading-relaxed whitespace-pre-wrap">
+                                            {check.content}
+                                        </p>
+                                        <div className="flex justify-between items-center pt-3 border-t border-zinc-900 text-xs">
+                                            <span className="text-emerald-400">Logic Score: +{check.logic_score}</span>
+                                            <button className="bg-zinc-900 hover:bg-zinc-800 text-zinc-200 px-3 py-1 rounded border border-zinc-800 text-xs transition-colors"
+                                                onClick={() => {
+                                                    setSelectedArgumentId(check.id);
+                                                    setTargetCommentId(null);
+                                                    setIsReviewOpen(true);
+                                                }}>
+                                                Review Argument
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+
+                                {hasMore && (
+                                    <div className="flex justify-center pt-2">
+                                        <button
+                                            onClick={() => loadArguments(false)}
+                                            disabled={isLoadingMore}
+                                            className="px-4 py-2 bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-emerald-400 hover:border-emerald-500/50 rounded transition-colors text-xs font-mono disabled:opacity-50"
+                                        >
+                                            {isLoadingMore ? "Loading..." : "Load More"}
+                                        </button>
+                                    </div>
+                                )}
+                            </>
+                        ) : activeTab === 'watchlist' ? (
+                            <div className="text-xs text-zinc-500 text-center">No Watchlist added yet</div>
+                        ) : activeTab === 'top' ? (
+                            <div className="text-xs text-zinc-500 text-center">No Argument yet</div>
+                        ) : (
+                            <div className="text-xs text-zinc-500 text-center">No Argument yet</div>
                         )}
                     </div>
                 </div>

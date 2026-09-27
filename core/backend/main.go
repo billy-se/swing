@@ -64,12 +64,13 @@ func RateLimitMiddleware(next http.HandlerFunc) http.HandlerFunc {
 }
 
 type App struct {
-	DB              *sql.DB
-	hub             *Hub
-	wsTickets       map[string]WSTicket
-	ticketMutex     sync.Mutex
-	Redis           *redis.Client
-	JwtAccessSecret string
+	DB               *sql.DB
+	hub              *Hub
+	wsTickets        map[string]WSTicket
+	ticketMutex      sync.Mutex
+	Redis            *redis.Client
+	JwtAccessSecret  string
+	JwtRefreshSecret string
 }
 
 type WSTicket struct {
@@ -100,14 +101,18 @@ func main() {
 	})
 
 	app := &App{
-		DB:              databaseConnection,
-		hub:             hub,
-		wsTickets:       make(map[string]WSTicket),
-		Redis:           rdb,
-		JwtAccessSecret: os.Getenv("JWT_ACCESS"),
+		DB:               databaseConnection,
+		hub:              hub,
+		wsTickets:        make(map[string]WSTicket),
+		Redis:            rdb,
+		JwtAccessSecret:  os.Getenv("JWT_ACCESS"),
+		JwtRefreshSecret: os.Getenv("JWT_REFRESH"),
 	}
 	if app.JwtAccessSecret == "" {
 		log.Fatal("JWT_ACCESS environment variable is missing")
+	}
+	if app.JwtRefreshSecret == "" {
+		log.Fatal("JWT_REFRESH environment variable is missing")
 	}
 
 	db.RunMigrations(databaseConnection)
@@ -179,7 +184,7 @@ func main() {
 	mux.HandleFunc("GET /api/notifications", app.authMiddleware(app.handleGetNotifications))
 	mux.HandleFunc("PATCH /api/notifications/{id}/read", app.authMiddleware(app.handleMarkNotificationRead))
 
-	mux.HandleFunc("POST /api/ws-ticket", app.authMiddleware(app.handleGenerateWSTicket))
+	mux.HandleFunc("POST /api/ws-ticket", app.handleGenerateWSTicket)
 
 	mux.HandleFunc("POST /api/logout", app.authMiddleware(app.handleLogout))
 
@@ -228,8 +233,8 @@ func RateLimiter(rdb *redis.Client, limit int, window time.Duration) func(http.H
 
 			if int(count) > limit {
 				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusOK)
-				w.Write([]byte(`{"error": "Too many requests. Please try again later."}`))
+				w.WriteHeader(http.StatusTooManyRequests)
+				w.Write([]byte(`{"error": "Your sending too much. Please try again later."}`))
 				return
 			}
 

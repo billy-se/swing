@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -180,6 +181,21 @@ func (a *App) handleGetArguments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	page := 1
+	limit := 20
+
+	if pStr := r.URL.Query().Get("page"); pStr != "" {
+		if p, err := strconv.Atoi(pStr); err == nil && p > 0 {
+			page = p
+		}
+	}
+	if lStr := r.URL.Query().Get("limit"); lStr != "" {
+		if l, err := strconv.Atoi(lStr); err == nil && l > 0 && l <= 100 {
+			limit = l
+		}
+	}
+	offset := (page - 1) * limit
+
 	var currentUserID int64 = 0
 	authHeader := r.Header.Get("Authorization")
 	if authHeader != "" {
@@ -197,7 +213,7 @@ func (a *App) handleGetArguments(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	cacheKey := fmt.Sprintf("arguments:feed:user:%d", currentUserID)
+	cacheKey := fmt.Sprintf("arguments:feed:user:%d:page:%d:limit:%d", currentUserID, page, limit)
 
 	cachedData, err := a.Redis.Get(ctx, cacheKey).Bytes()
 	if err == nil && len(cachedData) > 0 {
@@ -214,8 +230,9 @@ func (a *App) handleGetArguments(w http.ResponseWriter, r *http.Request) {
         FROM arguments a
 		LEFT JOIN watchlist w ON w.argument_id = a.id AND w.user_id = $1
         ORDER BY a.created_at DESC
+		LIMIT $2 OFFSET $3
     `
-	rows, err := a.DB.Query(query, currentUserID)
+	rows, err := a.DB.Query(query, currentUserID, limit, offset)
 	if err != nil {
 		log.Printf("Fetch error: %v", err)
 		http.Error(w, "Failed to fetch arguments", http.StatusInternalServerError)
@@ -372,6 +389,21 @@ func (a *App) handleTopArguments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	page := 1
+	limit := 20
+
+	if pStr := r.URL.Query().Get("page"); pStr != "" {
+		if p, err := strconv.Atoi(pStr); err == nil && p > 0 {
+			page = p
+		}
+	}
+	if lStr := r.URL.Query().Get("limit"); lStr != "" {
+		if l, err := strconv.Atoi(lStr); err == nil && l > 0 && l <= 100 {
+			limit = l
+		}
+	}
+	offset := (page - 1) * limit
+
 	var currentUserID int64 = 0
 	authHeader := r.Header.Get("Authorization")
 	if authHeader != "" {
@@ -387,7 +419,7 @@ func (a *App) handleTopArguments(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	cacheKey := fmt.Sprintf("arguments:top:user:%d", currentUserID)
+	cacheKey := fmt.Sprintf("arguments:top:user:%d:page:%d:limit:%d", currentUserID, page, limit)
 
 	cachedData, err := a.Redis.Get(ctx, cacheKey).Bytes()
 	if err == nil && len(cachedData) > 0 {
@@ -404,9 +436,10 @@ func (a *App) handleTopArguments(w http.ResponseWriter, r *http.Request) {
         FROM arguments a
 		LEFT JOIN watchlist w ON w.argument_id = a.id AND w.user_id = $1
         ORDER BY a.logic_score DESC
+		LIMIT $2 OFFSET $3
     `
 
-	rows, err := a.DB.Query(query, currentUserID)
+	rows, err := a.DB.Query(query, currentUserID, limit, offset)
 	if err != nil {
 		log.Printf("Top arguments fetch error: %v", err)
 		http.Error(w, "Failed to fetch top arguments", http.StatusInternalServerError)
@@ -623,9 +656,21 @@ func (a *App) handleCreateWatchlist(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
+	feedPattern := fmt.Sprintf("arguments:feed:user:%d:*", userID)
+	iterFeed := a.Redis.Scan(ctx, 0, feedPattern, 0).Iterator()
+	for iterFeed.Next(ctx) {
+		_ = a.Redis.Del(ctx, iterFeed.Val())
+	}
+
+	topPattern := fmt.Sprintf("arguments:top:user:%d:*", userID)
+	iterTop := a.Redis.Scan(ctx, 0, topPattern, 0).Iterator()
+	for iterTop.Next(ctx) {
+		_ = a.Redis.Del(ctx, iterTop.Val())
+	}
+
 	_ = a.Redis.Del(ctx,
-		fmt.Sprintf("arguments:feed:user:%d", userID),
-		fmt.Sprintf("arguments:top:user:%d", userID),
+		//fmt.Sprintf("arguments:feed:user:%d", userID),
+		//fmt.Sprintf("arguments:top:user:%d", userID),
 		fmt.Sprintf("arguments:watchlist:user:%d", userID),
 		fmt.Sprintf("argument:detail:%d", req.ArgumentID),
 	).Err()
@@ -661,9 +706,23 @@ func (a *App) handleGetWatchlist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	page := 1
+	limit := 20
+	if pStr := r.URL.Query().Get("page"); pStr != "" {
+		if p, err := strconv.Atoi(pStr); err == nil && p > 0 {
+			page = p
+		}
+	}
+	if lStr := r.URL.Query().Get("limit"); lStr != "" {
+		if l, err := strconv.Atoi(lStr); err == nil && l > 0 && l <= 100 {
+			limit = l
+		}
+	}
+	offset := (page - 1) * limit
+
 	ctx := r.Context()
 
-	cacheKey := fmt.Sprintf("arguments:watchlist:user:%d", userID)
+	cacheKey := fmt.Sprintf("arguments:watchlist:user:%d:page:%d:limit:%d", userID, page, limit)
 
 	cachedData, err := a.Redis.Get(ctx, cacheKey).Bytes()
 	if err == nil && len(cachedData) > 0 {
@@ -680,8 +739,9 @@ func (a *App) handleGetWatchlist(w http.ResponseWriter, r *http.Request) {
         JOIN watchlist w ON w.argument_id = a.id
         WHERE w.user_id = $1
         ORDER BY a.logic_score DESC
+		LIMIT $2 OFFSET $3
     `
-	rows, err := a.DB.Query(query, userID)
+	rows, err := a.DB.Query(query, userID, limit, offset)
 	if err != nil {
 		log.Printf("Watchlist fetch error: %v", err)
 		http.Error(w, "Failed to fetch watchlist", http.StatusInternalServerError)

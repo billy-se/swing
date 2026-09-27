@@ -4,6 +4,8 @@ services:
     container_name: docker-vaine-redis
     ports:
       - "6379:6379"
+    volumes:
+      - redis_data:/data
     restart: always
 
   postgres:
@@ -35,12 +37,19 @@ services:
       dockerfile: Dockerfile
     volumes:
       - ./core/backend:/app
+      - /app/node_modules
     container_name: docker-vaine-backend
     ports: 
       - "2026:2026"
     depends_on:
       - postgres
       - redis
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:2026/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     restart: always
 
   frontend:
@@ -55,14 +64,14 @@ services:
     depends_on:
       - backend
     restart: always
-  
-  k6:
-    image : grafana/k6:latest
+
+  autoheal:
+    image: willfarrell/autoheal
+    restart: always
     volumes:
-      - .:/workspace
-    working_dir: /workspace/core/backend/test
-    command: run test.js
-    depends_on:
-      - backend
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - AUTOHEAL_CONTAINER_LABEL=all
 volumes:
   pgdata:
+  redis_data:

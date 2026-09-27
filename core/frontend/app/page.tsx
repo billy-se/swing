@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation';
 import { setMemoryAccessToken, api } from '@/app/dashboard/api';
 import { UserProfile } from './dashboard/types';
@@ -27,7 +27,11 @@ export default function AuthPage() {
 
   const [selectedWords, setSelectedWords] = useState<string[]>(["","","","","",""]);
 
-  const [user, setUser] = useState<UserProfile | null>(null);
+  //const [user, setUser] = useState<UserProfile | null>(null);
+
+  const isSubmittingRef = useRef(false);
+
+  //let isSubmittingGuard = false;
 
   useEffect(() => {
     let timeoutId: NodeJS.Timeout;
@@ -101,12 +105,17 @@ export default function AuthPage() {
 
   const handleLogin = async (formSubmitEvent: React.SyntheticEvent) => {
     formSubmitEvent.preventDefault();
+
+    if (isSubmittingRef.current || loading) return;
+    isSubmittingRef.current = true;
+
     setSuccessId(null);
     setLoginMessage('');
     setError('');
 
     if (!email || !password){
-      setError('PLEASE FILL or COMPLETE')
+      setError('PLEASE FILL or COMPLETE');
+      isSubmittingRef.current = false;
       return;
     }
 
@@ -118,8 +127,15 @@ export default function AuthPage() {
       setMemoryAccessToken(response.data.access_token);
       router.push('/dashboard');
     }catch(error: any){
-      if (error.response && typeof error.response.data == 'string') setError(error.response.data.trim())
-      else setError('Network error. Please check you connection')
+      setMemoryAccessToken('');
+
+      if (error.response && error.response.data) {
+        const errorMsg = typeof error.response.data === 'string'
+          ? error.response.data
+          : error.response.data.error || 'Login failed';
+        setError(errorMsg.trim())
+      } else setError('Network error. Please check you connection')
+      isSubmittingRef.current = false;
     }finally{
       setLoading(false);
     }
@@ -198,7 +214,7 @@ export default function AuthPage() {
         </div>
       </div>
 
-      <div className="border border-zinc-800 p-6 w-full max-w-md bg-zinc-950">
+      <form onSubmit={handleLogin} className="border border-zinc-800 p-6 w-full max-w-md bg-zinc-950">
         <h1 className="text-sm tracking-widest text-zinc-400 mb-6 uppercase">
           {selectedWords[0]}_{selectedWords[1]} {selectedWords[2]}_{selectedWords[3]} {selectedWords[4]}_{selectedWords[5]}
         </h1>
@@ -208,6 +224,7 @@ export default function AuthPage() {
             placeholder="EMAIL"
             value={email}
             onChange={(changeEvent) => setEmail(changeEvent.target.value)}
+            disabled={loading}
             className="bg-black border border-zinc-700 p-2 text-sm focus:outline-none focus:border-white"
           />
           <input 
@@ -215,20 +232,23 @@ export default function AuthPage() {
             placeholder="PASSWORD"
             value={password}
             onChange={(changeEvent) => setPassword(changeEvent.target.value)}
+            disabled={loading}
             className="bg-black border border-zinc-700 p-2 text-sm focus:outline-none focus:border-white"
           />
 
           <div className="flex gap-2 mt-4">
             <button 
-              type="button"
-              onClick={handleLogin}
+              type="submit"
+              //onClick={handleLogin}
+              disabled={loading}
               className="flex-1 bg-white text-black text-xs font-bold py-2 hover:bg-zinc-200"
             >
-              LOGIN
+              {loading ? 'PROCESSING...' : 'LOGIN'}
             </button>
             <button 
               type="button"
               onClick={handleSignup}
+              disabled={loading}
               className="flex-1 border border-zinc-700 text-xs py-2 hover:border-white"
             >
               SIGN_UP
@@ -238,12 +258,13 @@ export default function AuthPage() {
           <button 
             type="button"
             onClick={handleViewerMode}
+            disabled={loading}
             className="mt-2 text-zinc-500 text-xs hover:text-white underline text-center"
           >
             Enter Viewer Mode
           </button>
         </div>
-      </div>
+      </form>
     </main>
   )
 }

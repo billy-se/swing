@@ -9,8 +9,8 @@ export const options = {
       executor: 'ramping-vus',
       startVUs: 2,
       stages: [
-        { duration: '30s', target: 8 },   // Gentle warmup
-        { duration: '1m', target: 50 },   // Safe peak load
+        { duration: '30s', target: 10 },   // Gentle warmup
+        { duration: '1m', target: 30 },   // Safe peak load
         { duration: '30s', target: 0 },   // Cool down
       ]
     },
@@ -20,7 +20,7 @@ export const options = {
   },
 };
 
-const BASE_URL = 'http://backend:2026';
+const BASE_URL = __ENV.BASE_URL || 'http://backend:2026';
 const RUN_ID = Date.now();
 const USER_POOL_SIZE = 30;
 
@@ -146,7 +146,9 @@ export default function (data) {
     return;
   }
 
-  const wsUrl = `ws://backend:2026/ws?ticket=${ticket}`;
+  const WS_BASE_URL = BASE_URL.replace(/^http/, 'ws');
+
+  const wsUrl = `${WS_BASE_URL}/ws?ticket=${ticket}`;
   ws.connect(wsUrl, {}, function (socket) {
     socket.on('open', function () {
       socket.setTimeout(function () {

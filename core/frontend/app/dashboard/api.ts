@@ -49,10 +49,10 @@ api.interceptors.response.use(
 
         if (error.response?.status === 401 && !originalRequest._retry) {
             
-            if (originalRequest.url?.includes('/api/refresh')) {
+            /*if (originalRequest.url?.includes('/api/refresh')) {
                 memoryAccessToken = null;
                 return Promise.reject(error);
-            }
+            }*/
             if (isRefreshing) {
                 return new Promise((resolve, reject) => {
                     failedQueue.push({ resolve, reject });
@@ -89,6 +89,10 @@ api.interceptors.response.use(
                 processQueue(refreshError, null);
                 isRefreshing = false;
                 memoryAccessToken = null;
+
+                if (typeof window !== 'undefined' && window.location.pathname !== '/') {
+                    window.location.href = '/';
+                }
                 return Promise.reject(refreshError);
             }
         }

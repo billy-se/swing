@@ -63,25 +63,12 @@ func (a *App) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-/*func generateJWT(userID int) (string, error) {
-	secret := os.Getenv("JWTSECRET")
-	if secret == "" {
-		secret = "default_fallback_secret"
-	}
-
-	claims := jwt.MapClaims{
-		"user_id": userID,
-		"exp":     time.Now().Add(time.Hour * 24 * 7).Unix(),
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString([]byte(secret))
-}*/
-
 func (a *App) parseToken(tokenString string) (jwt.MapClaims, error) {
 	if a.JwtAccessSecret == "" {
 		return nil, errors.New("[parseToken]: JWT_ACCESS environment variable is missing")
 	}
+
+	fmt.Printf("[DEBUG] parseToken using secret (len: %d, start: %s)\n", len(a.JwtAccessSecret), a.JwtAccessSecret[:3])
 
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
@@ -107,9 +94,23 @@ func (a *App) parseToken(tokenString string) (jwt.MapClaims, error) {
 	return claims, nil
 }
 
-func generateAccessToken(userID int, userName string) (string, error) {
-	jwtAccessSigningKey := os.Getenv("JWT_ACCESS")
-	if jwtAccessSigningKey == "" {
+/*func generateJWT(userID int) (string, error) {
+	secret := os.Getenv("JWTSECRET")
+	if secret == "" {
+		secret = "default_fallback_secret"
+	}
+
+	claims := jwt.MapClaims{
+		"user_id": userID,
+		"exp":     time.Now().Add(time.Hour * 24 * 7).Unix(),
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString([]byte(secret))
+}*/
+
+func (a *App) generateAccessToken(userID int, userName string) (string, error) {
+	if a.JwtAccessSecret == "" {
 		return "", errors.New("JWT_ACCESS environment variable is missing")
 	}
 
@@ -121,14 +122,15 @@ func generateAccessToken(userID int, userName string) (string, error) {
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString([]byte(jwtAccessSigningKey))
+	return token.SignedString([]byte(a.JwtAccessSecret))
 }
 
-func generateRefreshToken(userID int, userName string) (string, error) {
-	jwtRefreshSigningKey := os.Getenv("JWT_REFRESH")
-	if jwtRefreshSigningKey == "" {
+func (a *App) generateRefreshToken(userID int, userName string) (string, error) {
+	if a.JwtRefreshSecret == "" {
 		return "", errors.New("JWT_REFRESH environment variable is missing")
 	}
+
+	fmt.Printf("[DEBUG] generateAccessToken using secret (len: %d, start: %s)\n", len(a.JwtAccessSecret), a.JwtAccessSecret[:3])
 
 	claims := jwt.MapClaims{
 		"username": userName,
@@ -138,7 +140,7 @@ func generateRefreshToken(userID int, userName string) (string, error) {
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString([]byte(jwtRefreshSigningKey))
+	return token.SignedString([]byte(a.JwtRefreshSecret))
 }
 
 func (a *App) handleRefresh(w http.ResponseWriter, r *http.Request) {
@@ -159,16 +161,16 @@ func (a *App) handleRefresh(w http.ResponseWriter, r *http.Request) {
 
 	refreshTokenString := cookie.Value
 
-	jwtRefresh := os.Getenv("JWT_REFRESH")
-	if jwtRefresh == "" {
+	if a.JwtRefreshSecret == "" {
 		http.Error(w, "[handleRefresh]: Cant find JWT_REFRESH", 0)
+		return
 	}
 
 	token, err := jwt.Parse(refreshTokenString, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method")
 		}
-		return []byte(jwtRefresh), nil
+		return []byte(a.JwtRefreshSecret), nil
 	})
 
 	if err != nil || !token.Valid {
@@ -201,7 +203,7 @@ func (a *App) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 	username := userUsernameString
 
-	newAccessToken, err := generateAccessToken(userID, username)
+	newAccessToken, err := a.generateAccessToken(userID, username)
 	if err != nil {
 		http.Error(w, "Failed to generate new access token", http.StatusInternalServerError)
 		return
@@ -228,10 +230,24 @@ func (a *App) handleGenerateWSTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, ok := r.Context().Value(userIDKey).(int)
+	var userID int = 0
+
+	/*userID, ok := r.Context().Value(userIDKey).(int)
 	if !ok {
 		http.Error(w, "[handleGenerateWSTicket]: Unauthorized", http.StatusUnauthorized)
 		return
+	}*/
+	authHeader := r.Header.Get("Authorization")
+	if authHeader != "" {
+		parts := strings.Split(authHeader, " ")
+		if len(parts) == 2 && parts[0] == "Bearer" {
+			claims, err := a.parseToken(parts[1])
+			if err == nil {
+				if userIDFloat, ok := claims["user_id"].(float64); ok {
+					userID = int(userIDFloat)
+				}
+			}
+		}
 	}
 
 	ticket, err := generateRandomString(16)
@@ -298,7 +314,7 @@ func (a *App) handleRefreshToken(w http.ResponseWriter, r *http.Request) {
 	}
 	username := userUsernameString
 
-	newAccessToken, err := generateAccessToken(userID, username)
+	newAccessToken, err := a.generateAccessToken(userID, username)
 
 	if err != nil {
 		http.Error(w, "Failed to generate access token", http.StatusInternalServerError)
@@ -325,7 +341,10 @@ type User struct {
 }
 
 func (a *App) handleHealthCheck(w http.ResponseWriter, r *http.Request) {
-	if err := a.DB.Ping(); err != nil {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+
+	if err := a.DB.PingContext(ctx); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte("Engine: online, Connection: lost"))
 		return
@@ -536,19 +555,32 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Printf("In -> Name: %s, ID: %d\n", user.Username, user.Id)
-
 	//under construnction
 
-	var ctx = context.Background()
+	/*var ctx = context.Background()
+	activeSession := fmt.Sprintf("session_lock:%d", user.Id)
 
-	activeSession := fmt.Sprintf("presence:user:%d", user.Id)
+	success, err := a.Redis.SetNX(ctx, activeSession, "active", time.Second*30).Result()
 
-	val, err := a.Redis.Get(ctx, activeSession).Result()
-	if err == nil && val != "" {
-		http.Error(w, "Someone is using this account", http.StatusConflict)
+	if err != nil {
+		log.Println("Redis error setting presence:", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
+
+	if !success {
+		http.Error(w, "Someone is using this account", http.StatusConflict)
+		return
+	}*/
+
+	fmt.Printf("In -> Name: %s, ID: %d\n", user.Username, user.Id)
+
+	/*
+		val, err := a.Redis.Get(ctx, activeSession).Result()
+		if err == nil && val != "" {
+			http.Error(w, "Someone is using this account", http.StatusConflict)
+			return
+		}*/
 
 	/*var activeSessionCount int //redis here
 	err = a.DB.QueryRow(
@@ -567,7 +599,7 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}*/
 
 	//generate short-lived access token
-	accessToken, err := generateAccessToken(user.Id, user.Username)
+	accessToken, err := a.generateAccessToken(user.Id, user.Username)
 	if err != nil {
 		log.Println("JWT Generation Error:", err)
 
@@ -576,7 +608,7 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	//generate long-lived refresh token
-	refreshToken, err := generateRefreshToken(user.Id, user.Username)
+	refreshToken, err := a.generateRefreshToken(user.Id, user.Username)
 	if err != nil {
 		log.Println("JWT Generation Error:", err)
 
@@ -584,21 +616,47 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	refreshKey := fmt.Sprintf("session:refresh:%d", user.Id)
-	expiresAt := time.Now().Add(time.Hour * 24 * 7) //redis here
+	ctx := context.Background()
+	activeSessionKey := fmt.Sprintf("session_active:%d", user.Id)
 
-	err = a.Redis.Set(ctx, refreshKey, refreshToken, time.Hour*24*7).Err()
+	exists, err := a.Redis.Exists(ctx, activeSessionKey).Result()
 	if err != nil {
-		log.Println("Redis error saving session:", err)
+		log.Println("Redis error checking session:", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	err = a.Redis.Set(ctx, activeSession, "active", time.Second*30).Err()
+	if exists > 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		w.Write([]byte(`{"error": "Account is already logged in somewhere."}`))
+		return
+	}
+
+	err = a.Redis.Set(ctx, activeSessionKey, "active", time.Second*45).Err()
+	if err != nil {
+		log.Println("Redis error setting active session lock:", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	//redisKey := fmt.Sprintf("user:refresh_token:%d", user.Id)
+
+	//refreshKey := fmt.Sprintf("session:refresh:%d", user.Id)
+	expiresAt := time.Now().Add(time.Hour * 24 * 7) //redis here
+
+	/*err = a.Redis.Set(ctx, redisKey, refreshToken, time.Hour*24*7).Err()
+	if err != nil {
+		log.Println("Redis error saving session:", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}*/
+
+	//remove this
+	/*err = a.Redis.Set(ctx, activeSession, "active", time.Second*30).Err()
 	if err != nil {
 		log.Println("Redis error setting presense")
 		return
-	}
+	}*/
 
 	/*_, err = a.DB.Exec(
 		"INSERT INTO sessions (user_id, token_hash, expires_at) VALUES ($1, $2, $3)",
@@ -637,6 +695,30 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (a *App) parseRefreshToken(tokenString string) (jwt.MapClaims, error) {
+	if a.JwtRefreshSecret == "" {
+		return nil, errors.New("[parseRefreshToken]: JWT_REFRESH environment variable is missing")
+	}
+
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method")
+		}
+		return []byte(a.JwtRefreshSecret), nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if !token.Valid {
+		return nil, fmt.Errorf("invalid or expired refresh token")
+	}
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return nil, fmt.Errorf("invalid token claims")
+	}
+	return claims, nil
+}
+
 func (a *App) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -649,7 +731,7 @@ func (a *App) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	claims, err := a.parseToken(cookie.Value)
+	claims, err := a.parseRefreshToken(cookie.Value)
 	if err != nil {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -665,9 +747,9 @@ func (a *App) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 
 	var ctx = r.Context()
 
-	activeSession := fmt.Sprintf("presence:user:%d", userId)
+	activeSession := fmt.Sprintf("session_active:%d", userId)
 
-	err = a.Redis.Set(ctx, activeSession, "active", time.Second*30).Err()
+	err = a.Redis.Set(ctx, activeSession, "active", time.Second*45).Err()
 	if err != nil {
 		log.Println("Redis heartbeat error:", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -782,6 +864,28 @@ func (a *App) WebSocketHandler(w http.ResponseWriter, r *http.Request) {
 
 	//ctx := context.Background()
 	ctx := r.Context()
+
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				pingCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				err := connection.Ping(pingCtx)
+				cancel()
+
+				if err != nil {
+					log.Println("Heartbeat failed, dropping dead connection:", err)
+					connection.Close(websocket.StatusPolicyViolation, "Connection dead")
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 
 	go func() {
 		for message := range client.send {
@@ -1072,4 +1176,15 @@ func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"message": "Logged out successfully"})
+}
+
+func (a *App) refreshSessionMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userId := r.Context().Value(userIDKey).(int)
+		activeSession := fmt.Sprintf("presence:user:%d", userId)
+
+		a.Redis.Expire(context.Background(), activeSession, time.Second*30)
+
+		next.ServeHTTP(w, r)
+	}
 }
