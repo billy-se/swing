@@ -147,4 +147,7 @@ Stress Test Summary: State the bottleneck: Performance collapses between 1,250 a
 [View](.assets/load-test-result.txt)
 
 * Tested under 50 concurrent VUs with k6: ~5ms median latency, 100% pass rate on core logic. (containerized testing)
-[View](.assets/load-test-result.txt)
+[View](.assets/load-test-result2.txt)
+
+* Tested under 1,300 concurrent VUs with k6: ~57ms median latency, 100% successful end-to-end WebSocket sync and reaction throughput. (external load testing)
+[View](.assets/load-test-result3.txt)

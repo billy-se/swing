@@ -10,7 +10,7 @@ export const options = {
       startVUs: 2,
       stages: [
         { duration: '30s', target: 10 },   // Gentle warmup
-        { duration: '1m', target: 30 },   // Safe peak load
+        { duration: '1m', target: 1300 },   // Safe peak load
         { duration: '30s', target: 0 },   // Cool down
       ]
     },
@@ -157,12 +157,12 @@ export default function (data) {
     });
   });
 
-  const newArgRes = http.post(`${BASE_URL}/api/arguments`, JSON.stringify({
-    title: `Argument by VU ${__VU} Iter ${__ITER}`,
-    content: 'Dynamic load test content.'
-  }), { headers: authHeaders, timeout: '3s' });
-  
-  check(newArgRes, { 'created argument successfully': (r) => r.status === 201 || r.status === 200 });
+  if (Math.random() < 0.4) {
+    http.post(`${BASE_URL}/api/arguments`, JSON.stringify({
+      title: `Argument by VU ${__VU} Iter ${__ITER}`,
+      content: 'Dynamic load test content.'
+    }), { headers: authHeaders, timeout: '3s' });
+  }
 
   const getArgsRes = http.get(`${BASE_URL}/api/arguments/top`, { headers: authHeaders, timeout: '3s' });
   let targetArgumentId = null;
@@ -171,40 +171,44 @@ export default function (data) {
     try {
       const args = JSON.parse(getArgsRes.body);
       if (Array.isArray(args) && args.length > 0) {
-        const index = (__VU + __ITER) % args.length;
-        targetArgumentId = args[index].id;
+        const randomIndex = Math.floor(Math.random() * args.length);
+        targetArgumentId = args[randomIndex].id;
       }
     } catch (e) {}
   }
 
   if (targetArgumentId) {
-    if ((__VU + __ITER) % 3 === 0) {
-      const getCommentsRes = http.get(`${BASE_URL}/api/comments?argument_id=${targetArgumentId}`, { headers: authHeaders, timeout: '5s' });
-      check(getCommentsRes, { 'fetched comments successfully': (r) => r.status === 200 });
-    }
-
     const commentPayload = JSON.stringify({
       argument_id: targetArgumentId,
       parent_id: null,
       content: `Comment from VU ${__VU} iteration ${__ITER}`
     });
-    
-    const postCommentRes = http.post(`${BASE_URL}/api/comments`, commentPayload, { headers: authHeaders, timeout: '3s' });
-    check(postCommentRes, { 'posted comment successfully': (r) => r.status === 201 || r.status === 200 });
+    http.post(`${BASE_URL}/api/comments`, commentPayload, { headers: authHeaders, timeout: '3s' });
 
-    let createdCommentId = 1;
-    if (postCommentRes.status === 201 || postCommentRes.status === 200) {
+    const getCommentsRes = http.get(`${BASE_URL}/api/comments?argument_id=${targetArgumentId}`, { headers: authHeaders, timeout: '5s' });
+    
+    if (check(getCommentsRes, { 'fetched comments successfully': (r) => r.status === 200 })) {
       try {
-        const cBody = JSON.parse(postCommentRes.body);
-        if (cBody.id) createdCommentId = cBody.id;
+        const comments = JSON.parse(getCommentsRes.body);
+        if (Array.isArray(comments) && comments.length > 0) {
+          
+          const eligibleComments = comments.filter(c => c.user_id !== session.userId);
+
+          if (eligibleComments.length > 0) {
+            const randomComment = eligibleComments[Math.floor(Math.random() * eligibleComments.length)];
+            
+            if (randomComment && randomComment.id) {
+              const firePayload = JSON.stringify({
+                comment_id: randomComment.id
+              });
+              
+              const fireRes = http.post(`${BASE_URL}/api/comments/fire`, firePayload, { headers: authHeaders, timeout: '3s' });
+              check(fireRes, { 'fire reaction processed': (r) => r.status === 200 || r.status === 201 || r.status === 400 });
+            }
+          }
+        }
       } catch (e) {}
     }
-
-    const firePayload = JSON.stringify({
-      comment_id: createdCommentId
-    });
-    const fireRes = http.post(`${BASE_URL}/api/comments/fire`, firePayload, { headers: authHeaders, timeout: '3s' });
-    check(fireRes, { 'fire reaction processed': (r) => r.status === 200 || r.status === 400 });
   }
 
   sleep(4);

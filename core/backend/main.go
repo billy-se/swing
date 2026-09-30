@@ -195,6 +195,8 @@ func main() {
 
 	mux.HandleFunc("POST /api/heartbeat", app.handleHeartbeat)
 
+	mux.HandleFunc("GET /api/stats", app.authMiddleware(app.handleShowStats))
+
 	handler := EnableCORS(mux)
 
 	configuration := config.Load()

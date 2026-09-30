@@ -54,3 +54,16 @@ export interface UserProfile  {
     role: string | null;
     logicScore: number;
 }
+
+export interface TimeSeriesPoint {
+    time_bucket: string;
+    count: number;
+}
+
+export interface ArgumentStatsResponse {
+    argument_id: number;
+    created_at: string;
+    age_in_seconds: number;
+    comment_volume: TimeSeriesPoint[];
+    fire_reactions: TimeSeriesPoint[];
+}

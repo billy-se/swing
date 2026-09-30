@@ -7,6 +7,7 @@ import { CreateArgumentModal } from './createModal';
 import { api, setMemoryAccessToken, getMemoryAccessToken } from '@/app/dashboard/api';
 import { useRouter } from 'next/navigation';
 import { startTransition } from 'react';
+import { ArgumentStatsResponse } from './types';
 
 export default function Home() {
     const [isReviewOpen, setIsReviewOpen] = useState(false);
@@ -40,6 +41,8 @@ export default function Home() {
     const [isLoadingList, setIsLoadingList] = useState(false);
     const [isLoadingMore, setIsLoadingMore] = useState(false);
     const LIMIT = 20;
+
+    //const [stats, setStats] = useState<ArgumentStatsResponse | null>(null);
 
     const mapComments = (commentsList: RawComment[]): Comment[] => {
         if (!Array.isArray(commentsList)) return [];

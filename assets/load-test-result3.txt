@@ -1,0 +1,47 @@
+  █ THRESHOLDS 
+
+    http_req_failed
+    ✗ 'rate<0.20' rate=27.13%
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 3142   21.161063/s
+    checks_succeeded...: 60.34% 1896 out of 3142
+    checks_failed......: 39.65% 1246 out of 3142
+
+    ✗ logged in
+      ↳  4% — ✓ 60 / ✗ 1240
+    ✗ fetched arguments successfully
+      ↳  99% — ✓ 612 / ✗ 6
+    ✓ fetched comments successfully
+    ✓ fire reaction processed
+
+    HTTP
+    http_req_duration..............: avg=94.22ms min=0s       med=56.73ms  max=1.56s p(90)=231.29ms p(95)=346.5ms 
+      { expected_response:true }...: avg=82.36ms min=934.31µs med=23.83ms  max=1.56s p(90)=231.78ms p(95)=365.36ms
+    http_req_failed................: 27.13% 1258 out of 4636
+    http_reqs......................: 4636   31.223007/s
+
+    EXECUTION
+    iteration_duration.............: avg=1.07s   min=1s       med=1s       max=40s   p(90)=1s       p(95)=1.01s   
+    iterations.....................: 55936  376.723497/s
+    vus............................: 3      min=0            max=1300
+    vus_max........................: 1300   min=1300         max=1300
+
+    NETWORK
+    data_received..................: 280 MB 1.9 MB/s
+    data_sent......................: 1.7 MB 12 kB/s
+
+    WEBSOCKET
+    ws_connecting..................: avg=2.19s   min=2.36ms   med=4.75ms   max=30s   p(90)=33.5ms   p(95)=30s     
+    ws_msgs_received...............: 2504   16.864195/s
+    ws_session_duration............: avg=2.47s   min=303.02ms med=306.32ms max=30s   p(90)=344.2ms  p(95)=30s     
+    ws_sessions....................: 618    4.16217/s
+
+
+
+
+running (2m28.5s), 0000/1300 VUs, 55936 complete and 2 interrupted iterations
+target_ceiling_test ✓ [ 100% ] 0000/1300 VUs  2m0s
+time="2026-09-30T03:39:26Z" level=error msg="thresholds on metrics 'http_req_failed' have been crossed"
