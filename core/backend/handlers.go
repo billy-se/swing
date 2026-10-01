@@ -446,10 +446,10 @@ func (a *App) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	email := strings.ToLower(strings.TrimSpace(input.Email))
-	decryptEmail := utils.GenerateBlindIndex(email, []byte(os.Getenv("keyAesGo")))
+	encryptEmail := utils.GenerateBlindIndex(email, []byte(os.Getenv("keyAesGo")))
 
 	var existingID int
-	err = a.DB.QueryRow("SELECT id FROM users WHERE email_hash = $1", decryptEmail).Scan(&existingID)
+	err = a.DB.QueryRow("SELECT id FROM users WHERE email_hash = $1", encryptEmail).Scan(&existingID)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		secureEmail, err := utils.AesGo(input.Email)
@@ -475,7 +475,7 @@ func (a *App) handleRegister(w http.ResponseWriter, r *http.Request) {
 		var createdAt time.Time
 		defaultRole := "user"
 
-		err = a.DB.QueryRow(query, secureEmail, decryptEmail, hashedPassword, name, defaultScore, defaultRole).Scan(&id, &createdAt)
+		err = a.DB.QueryRow(query, secureEmail, encryptEmail, hashedPassword, name, defaultScore, defaultRole).Scan(&id, &createdAt)
 		if err != nil {
 			log.Printf("Database insert errorrr: %v", err)
 			http.Error(w, "Email might already be taken", http.StatusBadRequest)

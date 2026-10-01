@@ -44,6 +44,10 @@ export default function Home() {
 
     //const [stats, setStats] = useState<ArgumentStatsResponse | null>(null);
 
+    const [pendingArguments, setPendingArguments] = useState<Argument[]>([]);
+    const [newCount, setNewCount] = useState(0);
+    const [maxPage, setMaxPage] = useState<number | null>(null);
+
     const mapComments = (commentsList: RawComment[]): Comment[] => {
         if (!Array.isArray(commentsList)) return [];
 
@@ -61,20 +65,31 @@ export default function Home() {
         return mapped.reverse();
     };
 
-    const loadArguments = async (reset = false) => {
-        const targetPage = reset ? 1 : page;
+    const loadArguments = async (reset = false, customPage?: number) => {
+        const targetPage = customPage !== undefined ? customPage : (reset ? 1 : page);
+        if (!reset && customPage === undefined && !hasMore) return;
 
-        if (!reset && !hasMore) return;
+        //if (!reset && !hasMore) return;
+        if (reset) {
+            setMaxPage(null);
+        }
 
-
+        if (reset && customPage === undefined && activeTab !== 'watchlist' && cache[activeTab]) {
+            setArgumentsList(cache[activeTab]);
+            setPage(1);
+            setHasMore(true);
+            setMaxPage(null);
+            return;
+        }
+        /*
         if (reset && cache[activeTab]) {
             setArgumentsList(cache[activeTab]);
             setPage(2);
             return;
-        }
+        }*/
 
         try {
-            if (reset) {
+            if (reset || customPage !== undefined) {
                 setIsLoadingList(true);
             } else {
                 setIsLoadingMore(true);
@@ -90,16 +105,34 @@ export default function Home() {
             const data = res.data;
 
             const items = Array.isArray(data) ? data : (data.arguments || data.watchlist || []);
+            const totalItems = data.total ?? null;
             //if (!Array.isArray(data)) return;
-            if (items.length < LIMIT) setHasMore(false);
+            setHasMore(items.length === LIMIT);
+            //if (items.length < LIMIT) setHasMore(false);
+            if (totalItems !== null) {
+                setMaxPage(Math.ceil(totalItems/LIMIT));
+            } else if (items.length < LIMIT) {
+                setMaxPage(targetPage);
+            } else {
+                setMaxPage(prev => (prev !== null && targetPage >= prev ? null : prev));
+            }
 
             const initializedData = items.map((existingArguments: Argument) => ({
                 ...existingArguments,
                 comments: mapComments(existingArguments.comments || [])
             }));
 
-            setArgumentsList(prevList => {
+            /*setArgumentsList(prevList => {
                 if (reset || targetPage === 1) {
+                    return initializedData;
+                }
+
+                const existingIds = new Set(prevList.map(item => item.id));
+                const uniqueNewItems = initializedData.filter((item: Argument) => !existingIds.has(item.id));
+                return [...prevList, ...uniqueNewItems];
+            });*/
+            setArgumentsList(prevList => {
+                if (reset || customPage !== undefined || targetPage === 1) {
                     return initializedData;
                 }
 
@@ -108,8 +141,10 @@ export default function Home() {
                 return [...prevList, ...uniqueNewItems];
             });
 
-            if (reset) {
-                setPage(2);
+            if (customPage !== undefined) {
+                setPage(customPage);
+            } else if (reset) {
+                setPage(1);
                 setCache(prev => ({ ...prev, [activeTab]: initializedData }));
             } else {
                 setPage(prev => prev+1);
@@ -133,17 +168,24 @@ export default function Home() {
             const res = await api.post('/api/watchlist', { argument_id: argumentId });
             console.log("Watchlist API Response:", res.data);
 
-            setArgumentsList(prevList =>
-                prevList.map(arg => {
+            const isNowWatched = res.data.status === 'watched';
+
+            setArgumentsList(prevList => {
+
+                if (activeTab === 'watchlist' && !isNowWatched) {
+                    return prevList.filter(arg => String(arg.id) !== String(argumentId));
+                }
+
+                return prevList.map(arg => {
                     if (String(arg.id) === String(argumentId)) {
                         return {
                             ...arg,
-                            is_watched: res.data.status === 'watched'
+                            is_watched: isNowWatched
                         };
                     }
                     return arg;
-                })
-            );
+                });
+            });
 
             setCache({});
         }catch (err) {
@@ -325,11 +367,17 @@ export default function Home() {
                             comments: mapComments(rawPayload.comments || [])
                         };
 
-                        setArgumentsList(existingArguments => {
+                        /*setArgumentsList(existingArguments => {
+                            if (existingArguments.some(item => item.id === incomingArgument.id)) return existingArguments;
+                            return [incomingArgument, ...existingArguments];
+                        });*/
+
+                        setPendingArguments(existingArguments => {
                             if (existingArguments.some(item => item.id === incomingArgument.id)) return existingArguments;
                             return [incomingArgument, ...existingArguments];
                         });
 
+                        setNewCount(notifBadge => notifBadge + 1);
                     } else if (messageJson.type === "NEW_COMMENT") {
                         const incomingComment: Comment = {
                             id: String(messageJson.payload.id),
@@ -539,6 +587,17 @@ export default function Home() {
         }
     };
 
+    const handleShowNewArguments = () => {
+        setArgumentsList(existingArguments => [
+            ...pendingArguments,
+            ...existingArguments
+        ]);
+        setPendingArguments([]);
+        setNewCount(0);
+
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+
     return (
     <main className="h-[100dvh] w-full bg-black text-zinc-100 font-mono p-6 md:p-12 flex justify-center overflow-hidden box-border">
         {isLoading ? (
@@ -643,8 +702,18 @@ export default function Home() {
                             
                         </div>
                     </div>
+                        <div className="flex-1 min-h-0 overflow-y-auto space-y-4 pr-2 pb-6 relative [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+                        {newCount > 0 && (
+                            <div className="absolute top-2 left-0 right-0 flex justify-center z-30 pointer-events-none">
+                                <button
+                                    onClick={handleShowNewArguments}
+                                    className="pointer-events-auto bg-black/90 backdrop-blur-md border border-blue-500/40 text-blue-400 px-3.5 py-1 rounded-full shadow-lg text-[11px] font-mono hover:bg-blue-950/80 hover:border-blue-400 transition-all flex items-center gap-1.5"
+                                >
+                                    <span>↑</span> {newCount} new argument{newCount > 1 ? 's' : ''}
+                                </button>
+                            </div>
+                        )}
 
-                    <div className="flex-1 min-h-0 overflow-y-auto space-y-4 pr-2 pb-6 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
                         {(argumentsList || []).length > 0 ? (
                             <>
                                 {(argumentsList || []).map((check) => (
@@ -681,7 +750,7 @@ export default function Home() {
                                         </div>
                                     </div>
                                 ))}
-
+                                {/*
                                 {hasMore && (
                                     <div className="flex justify-center pt-2">
                                         <button
@@ -692,7 +761,71 @@ export default function Home() {
                                             {isLoadingMore ? "Loading..." : "Load More"}
                                         </button>
                                     </div>
-                                )}
+                                )}*/}
+                                <div className="flex justify-between items-center pt-4 border-t border-zinc-900 text-xs font-mono shrink-0">
+                                    <button
+                                        onClick={() => {
+                                            const chunkSize = 10;
+                                            const targetPage = Math.max(1, page - chunkSize);
+                                            loadArguments(false, targetPage);
+                                        }}
+                                        disabled={page <= 1 || isLoadingList}
+                                        className="px-3 py-1.5 bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-emerald-400 hover:border-emerald-500/50 rounded transition-colors disabled:opacity-30 disabled:hover:text-zinc-300 disabled:hover:border-zinc-800"
+                                    >
+                                        &larr; Prev
+                                    </button>
+
+                                    <div className="flex items-center gap-1.5 flex-wrap justify-center">
+                                        {(() => {
+                                            const chunkSize = 10;
+                                            const currentChunk = Math.floor((page - 1) / chunkSize);
+                                            const startPage = currentChunk * chunkSize + 1;
+                                            
+                                            const pages: number[] = [];
+                                            
+                                            for (let i = 0; i < chunkSize; i++) {
+                                                const p = startPage + i;
+                                                
+                                                if (maxPage !== null && p > maxPage) {
+                                                    break;
+                                                }
+                                                
+                                                pages.push(p);
+                                            }
+
+                                            return pages.map((p) => {
+                                                const isActive = page === p;
+                                                return (
+                                                    <button
+                                                        key={p}
+                                                        onClick={() => loadArguments(false, p)}
+                                                        disabled={isLoadingList}
+                                                        className={`w-7 h-7 flex items-center justify-center rounded border text-xs transition-colors ${
+                                                            isActive 
+                                                                ? 'bg-emerald-950/50 border-emerald-500/50 text-emerald-400 font-bold' 
+                                                                : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-700'
+                                                        }`}
+                                                    >
+                                                        {p}
+                                                    </button>
+                                                );
+                                            });
+                                        })()}
+                                    </div>
+
+                                    <button
+                                        onClick={() => {
+                                            const chunkSize = 10;
+                                            const nextTarget = page + chunkSize;
+                                            const targetPage = maxPage !== null ? Math.min(maxPage, nextTarget) : nextTarget;
+                                            loadArguments(false, targetPage);
+                                        }}
+                                        disabled={!hasMore || (maxPage !== null && page >= maxPage) || isLoadingList}
+                                        className="px-3 py-1.5 bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-emerald-400 hover:border-emerald-500/50 rounded transition-colors disabled:opacity-30 disabled:hover:text-zinc-300 disabled:hover:border-zinc-800"
+                                    >
+                                        Next &rarr;
+                                    </button>
+                                </div>
                             </>
                         ) : activeTab === 'watchlist' ? (
                             <div className="text-xs text-zinc-500 text-center">No Watchlist added yet</div>

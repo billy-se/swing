@@ -223,6 +223,13 @@ func (a *App) handleGetArguments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var totalCount int
+	err = a.DB.QueryRowContext(ctx, "SELECT COUNT (*) FROM arguments").Scan(&totalCount)
+	if err != nil {
+		log.Printf("Count error: %v", err)
+		totalCount = 0
+	}
+
 	query := `
         SELECT a.id, a.user_id, a.title, a.content, a.logic_score, a.author, a.created_at,
 		a.logic_score AS plan_score,
@@ -368,7 +375,17 @@ func (a *App) handleGetArguments(w http.ResponseWriter, r *http.Request) {
 		arguments = []ArgumentResponse{}
 	}
 
-	responseBytes, err := json.Marshal(arguments)
+	type PaginatedResponse struct {
+		Arguments []ArgumentResponse `json:"arguments"`
+		Total     int                `json:"total"`
+	}
+
+	responsePayload := PaginatedResponse{
+		Arguments: arguments,
+		Total:     totalCount,
+	}
+
+	responseBytes, err := json.Marshal(responsePayload)
 	if err != nil {
 		log.Printf("JSON marshal error: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -427,6 +444,13 @@ func (a *App) handleTopArguments(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write(cachedData)
 		return
+	}
+
+	var totalCount int
+	err = a.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM arguments").Scan(&totalCount)
+	if err != nil {
+		log.Printf("Count error: %v", err)
+		totalCount = 0
 	}
 
 	query := `
@@ -573,7 +597,17 @@ func (a *App) handleTopArguments(w http.ResponseWriter, r *http.Request) {
 		arguments = []ArgumentResponse{}
 	}
 
-	responseBytes, err := json.Marshal(arguments)
+	type PaginatedResponse struct {
+		Arguments []ArgumentResponse `json:"arguments"`
+		Total     int                `json:"total"`
+	}
+
+	responsePayload := PaginatedResponse{
+		Arguments: arguments,
+		Total:     totalCount,
+	}
+
+	responseBytes, err := json.Marshal(responsePayload)
 	if err != nil {
 		log.Printf("JSON marshal error: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -732,6 +766,13 @@ func (a *App) handleGetWatchlist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var totalCount int
+	err = a.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM watchlist WHERE user_id = $1", userID).Scan(&totalCount)
+	if err != nil {
+		log.Printf("Count error: %v", err)
+		totalCount = 0
+	}
+
 	query := `
         SELECT
             a.id, a.user_id, a.title, a.content, a.logic_score, a.author, a.created_at, a.logic_score AS plan_score, true AS is_watched
@@ -874,7 +915,17 @@ func (a *App) handleGetWatchlist(w http.ResponseWriter, r *http.Request) {
 		arguments = []ArgumentResponse{}
 	}
 
-	responseBytes, err := json.Marshal(arguments)
+	type PaginatedResponse struct {
+		Arguments []ArgumentResponse `json:"watchlist"`
+		Total     int                `json:"total"`
+	}
+
+	responsePayload := PaginatedResponse{
+		Arguments: arguments,
+		Total:     totalCount,
+	}
+
+	responseBytes, err := json.Marshal(responsePayload)
 	if err != nil {
 		log.Printf("JSON marshal error: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
