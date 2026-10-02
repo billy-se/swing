@@ -101,7 +101,7 @@ export function CommentFunc({ processedComment, argumentId, targetCommentId, onA
     const [isExpandedLong, setIsExpandedLong] = useState(false);
     
     const commentUserId = (processedComment as any).user_id ?? (processedComment as any).userId;
-    const isOwnComment = currentUserId !== null && commentUserId !== undefined && Number(currentUserId) === Number(commentUserId);
+    const isOwnComment = currentUserId !== null && commentUserId !== undefined && Number(currentUserId) === Number(processedComment.user_id);
 
     return (
         <div className="flex flex-col gap-2 my-2 text-xs">
@@ -140,7 +140,7 @@ export function CommentFunc({ processedComment, argumentId, targetCommentId, onA
                 )}
 
                 <div className="flex items-center gap-4 mt-2">
-                    {isLoggedIn && !isViewer && !isOwnComment && (
+                    {isLoggedIn && !isViewer && (
                         <button
                             onClick={handleFireClick}
                             className="text-[10px] flex items-center gap-1 text-zinc-400 hover:text-orange-400 transition-colors">
@@ -172,11 +172,16 @@ export function CommentFunc({ processedComment, argumentId, targetCommentId, onA
                                 if (!replyText.trim()) return;
                                 
                                 try {
-                                    await api.post('/api/comments', {
-                                            argument_id: Number(argumentId), 
-                                            parent_id: processedComment.id === "root-id" ? null : parseInt(String(processedComment.id)),
-                                            content: replyText  
+                                    const response = await api.post('/api/comments', {
+                                        argument_id: Number(argumentId), 
+                                        parent_id: processedComment.id === "root-id" ? null : parseInt(String(processedComment.id)),
+                                        content: replyText  
                                     });
+
+                                    // FIX: Call onAddReply so parent state updates immediately
+                                    if (response.data) {
+                                        onAddReply(String(processedComment.id), response.data);
+                                    }
 
                                     setReplyText("");
                                     setIsReplying(false);
@@ -276,12 +281,17 @@ export function PrimaryCommentInput({ argumentId, onAddReply }: PrimaryCommentIn
                     if (!primaryText.trim()) return;
 
                     try {
-                        await api.post('/api/comments', {
-                                argument_id: Number(argumentId),
-                                parent_id: null,
-                                content: primaryText
+                        const response = await api.post('/api/comments', {
+                            argument_id: Number(argumentId),
+                            parent_id: null,
+                            content: primaryText
                         });
                         
+                        // FIX: Call onAddReply for root comments too!
+                        if (response.data) {
+                            onAddReply("root-id", response.data);
+                        }
+
                         setPrimaryText("");
                     } catch (err) {
                         console.error("Error posting root comment:", err);

@@ -1,15 +1,15 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, Suspense } from 'react';
 import { Comment, Argument, NotificationItem, RawComment, UserProfile } from './types';
 import { ReviewModal } from './reviewModal';
 import { CreateArgumentModal } from './createModal';
 import { api, setMemoryAccessToken, getMemoryAccessToken } from '@/app/dashboard/api';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { startTransition } from 'react';
 import { ArgumentStatsResponse } from './types';
 
-export default function Home() {
+function Home() {
     const [isReviewOpen, setIsReviewOpen] = useState(false);
     const [selectedArgumentId, setSelectedArgumentId] = useState<null | number>(null);
     const [targetCommentId, setTargetCommentId] = useState<null | number | string>(null);
@@ -29,14 +29,19 @@ export default function Home() {
     const notificationRef = useRef<HTMLDivElement>(null);
 
     const router = useRouter();
+    const searchParams = useSearchParams();
+    const pathname = usePathname();
 
-    const [activeTab, setActiveTab] = useState<'recent' | 'top' | 'watchlist'>('recent');
+    const activeTab = (searchParams.get('tab') as 'recent' | 'top' | 'watchlist') || 'recent';
     const [isLoading, setIsLoading] = useState(true);
     const [isAuthInitialized, setIsAuthInitialized] = useState(false); 
 
     const [cache, setCache] = useState<Record<string, Argument[]>>({});
 
-    const [page, setPage] = useState(1);
+    const page = Number(searchParams.get('page')) || 1;
+    const highlightArgumentId = searchParams.get('argumentId');
+    const targetArgumentId = searchParams.get('target_argument_id');
+    const highlightCommentId = searchParams.get('commentId');
     const [hasMore, setHasMore] = useState(true);
     const [isLoadingList, setIsLoadingList] = useState(false);
     const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -76,7 +81,7 @@ export default function Home() {
 
         if (reset && customPage === undefined && activeTab !== 'watchlist' && cache[activeTab]) {
             setArgumentsList(cache[activeTab]);
-            setPage(1);
+            //setPage(1);
             setHasMore(true);
             setMaxPage(null);
             return;
@@ -98,7 +103,7 @@ export default function Home() {
             const endpoint = activeTab === 'top'
                 ? `/api/arguments/top?page=${targetPage}&limit=${LIMIT}`
                 : activeTab === 'watchlist'
-                    ? `/api/watchlist?page=${targetPage}&limit=${LIMIT}`
+                    ? `/api/watchlist?page=${targetPage}&limit=${LIMIT}&t=${Date.now()}`
                     : `/api/arguments?page=${targetPage}&limit=${LIMIT}`;
 
             const res = await api.get(endpoint);
@@ -141,13 +146,17 @@ export default function Home() {
                 return [...prevList, ...uniqueNewItems];
             });
 
-            if (customPage !== undefined) {
+            /*if (customPage !== undefined) {
                 setPage(customPage);
             } else if (reset) {
                 setPage(1);
                 setCache(prev => ({ ...prev, [activeTab]: initializedData }));
             } else {
                 setPage(prev => prev+1);
+            }*/
+
+            if (reset) {
+                setCache(prev => ({ ...prev, [activeTab]: initializedData }));
             }
 
             /*setCache(prev => ({ ...prev, [activeTab]: initializedData }));
@@ -157,7 +166,7 @@ export default function Home() {
         } catch (err) {
             console.error("Failed to fetch arguments:", err);
         } finally {
-            setIsLoading(false);
+            //setIsLoading(false);
             setIsLoadingList(false);
             setIsLoadingMore(false);
         }
@@ -192,6 +201,12 @@ export default function Home() {
             console.error("Failed to toggle watchlist: ", err);
         }
     }
+
+    const handlePageChange = (newPage: number) => {
+        const params = new URLSearchParams(searchParams.toString());
+        params.set('page', String(newPage));
+        router.push(`?${params.toString()}`);
+    };
 
     const loadNotifications = async () => {
         try {
@@ -488,12 +503,24 @@ export default function Home() {
         };
     }, []);
 
-    useEffect(() => {
+    /*useEffect(() => {
         if (!isAuthInitialized) return;
-        setPage(1);
-        setHasMore(true);
-        loadArguments(true);
-    },[activeTab, isAuthInitialized]);
+
+        loadArguments(true, page);
+
+        if (highlightArgumentId) {
+            setTimeout(() => {
+                const element = document.getElementById(`argument-${highlightArgumentId}`);
+                if (element) {
+                    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    element.classList.add('ring-4', 'ring-emerald-500');
+                }
+            }, 500);
+        }
+        //setPage(1);
+        //setHasMore(true);
+        //loadArguments(true, 1);
+    },[activeTab, page, isAuthInitialized]);*/
 
     const selectedArgument = (argumentsList || []).find((argumentItem) => argumentItem.id === selectedArgumentId) ?? null;
     
@@ -502,7 +529,7 @@ export default function Home() {
     const currentUsername = user?.username ?? 'GUEST';
     const logicScore = user?.logicScore ?? 0;
 
-    useEffect(() => { //under construction
+    useEffect(() => { //under construction / suspect 1
         if (!isLoggedIn || isViewer) return;
 
         const interval = setInterval(async () => {
@@ -514,6 +541,55 @@ export default function Home() {
         }, 15000);
         return () => clearInterval(interval);
     }, [isLoggedIn, isViewer]);
+
+    useEffect(() => {
+        const urlArgId = searchParams.get('argumentId');
+        const urlCommentId = searchParams.get('commentId');
+
+        if (urlArgId) {
+            setSelectedArgumentId(Number(urlArgId));
+            setTargetCommentId(urlCommentId ? Number(urlCommentId) : null);
+            setIsReviewOpen(true);
+        }
+    }, [searchParams]);
+
+    useEffect(() => {
+        if (!isAuthInitialized) return;
+
+        loadArguments(true, page);
+
+        if (highlightArgumentId) {
+            setTimeout(() => {
+                const element = document.getElementById(`argument-${highlightArgumentId}`);
+                if (element) {
+                    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    element.classList.add('ring-4', 'ring-emerald-500');
+                }
+            }, 500);
+        }
+    }, [activeTab, page, isAuthInitialized, highlightArgumentId]);
+
+    useEffect(() => { //good
+        const handleHashChange = () => {
+            const hash = window.location.hash;
+            const urlArgId = searchParams.get('argumentId');
+
+            if (hash.startsWith('#argument-')) {
+                const argId = hash.replace('#argument-', '');
+                setSelectedArgumentId(Number(argId));
+                setIsReviewOpen(true);
+            } else if (!hash && isReviewOpen) {
+                if (!urlArgId) {
+                    setIsReviewOpen(false);
+                }
+            }
+        };
+
+        handleHashChange();
+
+        window.addEventListener('hashchange', handleHashChange);
+        return () => window.removeEventListener('hashchange', handleHashChange);
+    }, [isReviewOpen]); // under construction
 
     const handleAddReply = (argumentId: string, incomingComment: { id: number; content: string; created_at: string; user_id?: number }) => {
         if (!selectedArgumentId) return;
@@ -587,7 +663,7 @@ export default function Home() {
         }
     };
 
-    const handleShowNewArguments = () => {
+    const handleShowNewArguments = () => { //suspect 2
         setArgumentsList(existingArguments => [
             ...pendingArguments,
             ...existingArguments
@@ -619,7 +695,7 @@ export default function Home() {
                 </div>
 
                 <div className="flex items-center gap-6 text-xs border-t sm:border-t-0 border-zinc-800 pt-3 sm:pt-0 w-full sm:w-auto justify-between sm:justify-end">
-                    {!isViewer && isLoggedIn && (
+                    {!isViewer && isLoggedIn && ( //suspect 3
                     <div
                         ref={notificationRef}
                         onClick={() => setIsNotificationOpen(!isNotificationOpen)}
@@ -650,11 +726,21 @@ export default function Home() {
                                                 }
 
                                                 if (notif.argument_id !== undefined && notif.argument_id !== null) {
-                                                    setActiveTab('recent');
+                                                    setIsNotificationOpen(false);
+
                                                     setSelectedArgumentId(Number(notif.argument_id));
                                                     setTargetCommentId(notif.comment_id || null);
                                                     setIsReviewOpen(true);
-                                                    setIsNotificationOpen(false);
+                                                    
+                                                    const currentParams = new URLSearchParams(window.location.search);
+                                                    currentParams.set('argumentId', String(notif.argument_id));
+                                                    if (notif.comment_id) {
+                                                        currentParams.set('commentId', String(notif.comment_id));
+                                                    } else {
+                                                        currentParams.delete('commentId');
+                                                    }
+
+                                                    window.history.replaceState(null, '', `?${currentParams.toString()}`);
                                                 }
                                             }}
                                             className={`text-[11px] py-2 px-2 border-b border-zinc-800 last:border-0 cursor-pointer transition-colors ${notif.is_read ? 'text-zinc-400 bg-transparent' : 'text-zinc-100 bg-zinc-800 font-semibold'}`}
@@ -686,16 +772,16 @@ export default function Home() {
                         <span className="text-zinc-200 font-bold tracking-wider px-1">ACTIVE DEBATES</span>
                         <div className="flex gap-10 bg-zinc-900/60 p-1 rounded-lg border border-zinc-800">
                             <button 
-                                onClick={() => setActiveTab('recent')}
+                                onClick={() => router.push('?tab=recent&page=1')}
                                 className={activeTab === 'recent' ? "text-emerald-400 underline font-semibold" : "text-zinc-400 hover:text-zinc-200"}
                                 >
                                     Recent</button>
 
                             <button 
-                                onClick={() => setActiveTab('top')}
+                                onClick={() => router.push('?tab=top&page=1')}
                                 className={activeTab === 'top' ? "text-emerald-400 underline font-semibold" : "text-zinc-400 hover:text-zinc-200"}>Top</button>
                             {!isViewer && <button 
-                                onClick={() => setActiveTab('watchlist')}
+                                onClick={() => router.push('?tab=watchlist&page=1')}
                                 className={activeTab === 'watchlist' ? "text-emerald-400 underline font-semibold" : "text-zinc-400 hover:text-zinc-200"}
                                 >
                                     WatchList</button>}
@@ -741,6 +827,9 @@ export default function Home() {
                                             <span className="text-emerald-400">Logic Score: +{check.logic_score}</span>
                                             <button className="bg-zinc-900 hover:bg-zinc-800 text-zinc-200 px-3 py-1 rounded border border-zinc-800 text-xs transition-colors"
                                                 onClick={() => {
+                                                    //router.push(`?tab=${activeTab}&page=${page}&argumentId=${check.id}`);
+                                                    window.history.pushState(null, '', `#argument-${check.id}`);
+
                                                     setSelectedArgumentId(check.id);
                                                     setTargetCommentId(null);
                                                     setIsReviewOpen(true);
@@ -767,7 +856,8 @@ export default function Home() {
                                         onClick={() => {
                                             const chunkSize = 10;
                                             const targetPage = Math.max(1, page - chunkSize);
-                                            loadArguments(false, targetPage);
+                                            //loadArguments(false, targetPage);
+                                            router.push(`?tab=${activeTab}&page=${targetPage}`);
                                         }}
                                         disabled={page <= 1 || isLoadingList}
                                         className="px-3 py-1.5 bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-emerald-400 hover:border-emerald-500/50 rounded transition-colors disabled:opacity-30 disabled:hover:text-zinc-300 disabled:hover:border-zinc-800"
@@ -798,7 +888,7 @@ export default function Home() {
                                                 return (
                                                     <button
                                                         key={p}
-                                                        onClick={() => loadArguments(false, p)}
+                                                        onClick={() => router.push(`?tab=${activeTab}&page=${p}`)}
                                                         disabled={isLoadingList}
                                                         className={`w-7 h-7 flex items-center justify-center rounded border text-xs transition-colors ${
                                                             isActive 
@@ -818,7 +908,8 @@ export default function Home() {
                                             const chunkSize = 10;
                                             const nextTarget = page + chunkSize;
                                             const targetPage = maxPage !== null ? Math.min(maxPage, nextTarget) : nextTarget;
-                                            loadArguments(false, targetPage);
+                                            //loadArguments(false, targetPage);
+                                            router.push(`?tab=${activeTab}&page=${targetPage}`);
                                         }}
                                         disabled={!hasMore || (maxPage !== null && page >= maxPage) || isLoadingList}
                                         className="px-3 py-1.5 bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-emerald-400 hover:border-emerald-500/50 rounded transition-colors disabled:opacity-30 disabled:hover:text-zinc-300 disabled:hover:border-zinc-800"
@@ -889,6 +980,7 @@ export default function Home() {
             <ReviewModal
                 isReviewOpen={isReviewOpen}
                 selectedArgument={selectedArgument}
+                selectedArgumentId={selectedArgumentId}
                 targetCommentId={targetCommentId}
                 setIsReviewOpen={setIsReviewOpen}
                 handleAddReply={handleAddReply}
@@ -910,4 +1002,12 @@ export default function Home() {
         )}
     </main>
 );
+}
+
+export default function Dashboard() {
+    return (
+        <Suspense fallback={<div className="p-8 text-zinc-500 text-center">Loading...</div>}>
+            <Home />
+        </Suspense>
+    );
 }

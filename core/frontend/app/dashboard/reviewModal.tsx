@@ -4,10 +4,12 @@ import { PrimaryCommentInput, CommentFunc } from './comments';
 import { getValidToken } from './auth';
 import { api } from './api';
 import { LineChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid, Legend, ReferenceArea } from 'recharts';
+import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 
 interface ReviewModalProps {
     isReviewOpen: boolean;
     selectedArgument: Argument | null;
+    selectedArgumentId: number | null;
     targetCommentId?: string | number | null;
     setIsReviewOpen: (value: boolean) => void;
     handleAddReply: (
@@ -22,45 +24,124 @@ interface ReviewModalProps {
     ) => void;
 }
 
-export function ReviewModal({ isReviewOpen, selectedArgument, targetCommentId, setIsReviewOpen, handleAddReply }: ReviewModalProps) {
+export function ReviewModal({ isReviewOpen, selectedArgument, selectedArgumentId, targetCommentId, setIsReviewOpen, handleAddReply }: ReviewModalProps) {
     const [stats, setStats] = useState<any>(null);
+    const [detailedArgument, setDetailedArgument] = useState<Argument | null>(null);
 
     const [left, setLeft] = useState<number | 'dataMin'>('dataMin');
     const [right, setRight] = useState<number | 'dataMax'>('dataMax');
     const [refAreaLeft, setRefAreaLeft] = useState<number | null>(null);
-    const [refAreaRight, setRefAreaRight] = useState<number | null>(null);
+    const [refAreaRight, setRefAreaRight] = useState<number | null>(null);  
+
+    const router = useRouter();
+    const pathname = usePathname();
+    const searchParams = useSearchParams();
+
+    const handleLocalAddReply = (targetId: string, savedComment: any) => {
+        handleAddReply(targetId, savedComment);
+
+        setDetailedArgument(prev => {
+            if (!prev) return prev;
+
+            const comments = prev.comments || [];
+
+            if (String(targetId) === "root-id") {
+                return {
+                    ...prev,
+                    comments: [savedComment, ...comments]
+                };
+            }
+
+            const insertComment = (commentsList: any[]): any[] => {
+                return commentsList.map(c => {
+                    if (String(c.id) === String(targetId)) {
+                        return {
+                            ...c,
+                            replies: [...(c.replies || []), savedComment]
+                        };
+                    }
+                    if (c.replies && c.replies.length > 0) {
+                        return {
+                            ...c,
+                            replies: insertComment(c.replies)
+                        };
+                    }
+                    return c;
+                });
+            };
+
+            if (targetId === "root-id") {
+                return {
+                    ...prev,
+                    comments: [savedComment, ...(prev.comments || [])]
+                };
+            }
+
+            return {
+                ...prev,
+                comments: insertComment(prev.comments || [])
+            };
+        });
+    };
 
     useEffect(() => {
-        if (!selectedArgument?.id) {
+        const argumentId = selectedArgument?.id || selectedArgumentId || searchParams.get('argumentId');
+
+        if (!argumentId) {
             setStats(null);
+            setDetailedArgument(null);
             return;
         }
 
-        const argumentId = selectedArgument.id;
-
         async function fetchStats() {
             try {
-                const res = await api.get(`/api/stats?argument_id=${argumentId}`);
-                setStats(res.data);
+                const [statsRes, argRes] = await Promise.all([
+                    api.get(`/api/stats?argument_id=${argumentId}`),
+                    api.get(`/api/arguments/${argumentId}`)]);
+
+                setStats(statsRes.data);
+
+                const fetchedArg = argRes.data;
+                if (fetchedArg && fetchedArg.comments) {
+                    fetchedArg.comments = [...fetchedArg.comments].reverse();
+                }
+
+                setDetailedArgument(argRes.data);
             } catch (err) {
                 console.error("Failed to fetch argument stats:", err);
                 setStats(null);
+                setDetailedArgument(selectedArgument);
             }
         }
         fetchStats();
-    }, [selectedArgument]);
+    }, [selectedArgument?.id, selectedArgumentId, searchParams]);
 
     useEffect(() => {
-        if (isReviewOpen && targetCommentId) {
+        if (isReviewOpen && targetCommentId && detailedArgument) {
             const timer = setTimeout(() => {
                 const element = document.getElementById(`comment-${targetCommentId}`);
                 if (element) {
                     element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    element.classList.add('highlight-flash');
+
+                    setTimeout(() => {
+                        element.classList.remove('highlight-flash');
+                    }, 3000);
                 }
-            }, 100);
-            return () => clearTimeout(timer);
+            }, 300);
         }
-    }, [isReviewOpen, targetCommentId]);
+    }, [isReviewOpen, targetCommentId, detailedArgument]);
+
+    /*useEffect(() => {
+        const argumentId = searchParams.get('argumentId');
+        if (!selectedArgument && argumentId) {
+            api.get(`/api/argument/${argumentId}`)
+            .then(res => setDetailedArgument(res.data))
+            .catch(err => console.error("Failed to load argument", err))
+        } else {
+            setDetailedArgument(null);
+        }
+    }, [selectedArgument, searchParams]);*/
 
     const handleZoom = () => {
         if (refAreaLeft === null || refAreaRight === null || refAreaLeft === refAreaRight) {
@@ -168,16 +249,48 @@ export function ReviewModal({ isReviewOpen, selectedArgument, targetCommentId, s
         }
     };
 
+    const handleClose = () => {
+        setIsReviewOpen(false);
+
+        const params = new URLSearchParams(searchParams.toString());
+
+        params.delete('argumentId');
+        params.delete('commentId');
+
+        window.location.hash = '';
+
+        const queryStr = params.toString();
+
+        router.replace(queryStr ? `${pathname}?${queryStr}` : pathname);
+        //window.history.pushState(null, '', window.location.pathname + window.location.search);
+    };
+
     const chartData = getCombinedChartData();
 
-    if (!isReviewOpen || !selectedArgument) return null;
+    if (!isReviewOpen || (!selectedArgument && !searchParams.get('argumentId'))) return null;
+
+    const activeArg = selectedArgument || detailedArgument;
+
+    if (!activeArg) {
+        return (
+            <div className="fixed inset-0 bg-black/65 backdrop-blur-sm z-50 flex items-center justify-center">
+                <div className="text-zinc-400 text-sm animate-pulse">Loading argument...</div>
+            </div>
+        );
+    }
 
     return (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex justify-between overflow-hidden">
+        <div 
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex justify-between overflow-hidden"
+            onClick={(e) => {
+                if (e.target === e.currentTarget) {
+                    handleClose();
+                }
+            }}>
             <div className="bg-zinc-900 border-r border-zinc-700 p-6 text-white w-full max-w-xl h-full overflow-y-auto shadow-xl flex flex-col gap-6">
                 <div className="flex justify-between items-center border-b border-zinc-800 pb-3">
                     <h3 className="text-sm font-semibold uppercase tracking-wider text-zinc-400">Argument Analytics Matrix</h3>
-                    <span className="text-xs text-zinc-500">ID: {selectedArgument?.id}</span>
+                    <span className="text-xs text-zinc-500">ID: {activeArg?.id}</span>
                 </div>
 
                 {stats ? (
@@ -284,39 +397,40 @@ export function ReviewModal({ isReviewOpen, selectedArgument, targetCommentId, s
             </div>
 
             {/* Right Column: Details & Comments */}
-            <div className="bg-zinc-900 border-l border-zinc-700 p-6 text-white w-full max-w-xl h-full overflow-y-auto shadow-xl">
-                <div className="flex justify-between items-center mb-4">
-                    <span className="text-sm text-zinc-400">Posted by {selectedArgument?.author}</span>
-                    <button onClick={() => setIsReviewOpen(false)} className="text-zinc-400 hover:text-white">✕</button>
-                </div>
-                    
-                <h3 className="text-lg font-bold mb-2">{selectedArgument?.title}</h3>
-                <p className="text-sm text-zinc-300 mb-4 whitespace-pre-wrap">
-                    {selectedArgument?.content}
-                </p>
-                    
-                <div className="border-t border-zinc-800 pt-4 mt-4 flex flex-col gap-2">
-                    <h4 className="text-[10px] font-semibold uppercase text-zinc-500 tracking-wider mb-2">Feedbacks and Comments</h4>
-
-                    <div className="mt-2 pt-3 border-t border-zinc-800/60">
+            <div className="bg-zinc-900 border-l border-zinc-700 p-6 text-white w-full max-w-xl h-full flex flex-col min-h-0 shadow-xl">
+                <div className="flex-shrink-0">
+                    <div className="flex justify-between items-center mb-4">
+                        <span className="text-sm text-zinc-400">Posted by {activeArg?.author}</span>
+                        <button onClick={handleClose} className="text-zinc-400 hover:text-white">✕</button>
+                    </div>
+                        
+                    <h3 className="text-lg font-bold mb-2">{activeArg?.title}</h3>
+                    <p className="text-sm text-zinc-300 mb-4 whitespace-pre-wrap">
+                        {activeArg?.content}
+                    </p>
+                        
+                    <div className="border-t border-zinc-800 pt-4 mt-4">
+                        <h4 className="text-[10px] font-semibold uppercase text-zinc-500 tracking-wider mb-2">Feedbacks and Comments</h4>
                         <PrimaryCommentInput 
-                            argumentId={selectedArgument.id} 
-                            onAddReply={handleAddReply} 
+                            argumentId={activeArg?.id as any}
+                            onAddReply={handleLocalAddReply} 
                         />
                     </div>
-                    
-                    {selectedArgument?.comments && selectedArgument.comments.length > 0 ? (
-                        selectedArgument.comments.map((processedComment) => (
+                </div>
+
+                <div className="flex-1 min-h-0 overflow-y-auto mt-4 pt-3 border-t border-zinc-800/60 space-y-3 pr-1">
+                    {activeArg?.comments && activeArg.comments.length > 0 ? (
+                        activeArg.comments.map((processedComment) => (
                             <CommentFunc 
                                 key={processedComment.id} 
                                 processedComment={processedComment} 
-                                argumentId={selectedArgument.id}
+                                argumentId={activeArg.id}
                                 targetCommentId={targetCommentId}
-                                onAddReply={handleAddReply} 
+                                onAddReply={handleLocalAddReply} 
                             />
                         ))
                     ) : (
-                        <p className="text-xs text-center text-zinc-500">No comments yet</p>
+                        <p className="text-xs text-center text-zinc-500 py-4">No comments yet</p>
                     )}
                 </div>
             </div>

@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/lib/pq"
 )
 
 type ArgumentInput struct {
@@ -194,6 +196,25 @@ func (a *App) handleGetArguments(w http.ResponseWriter, r *http.Request) {
 			limit = l
 		}
 	}
+
+	ctx := r.Context()
+
+	if targetArgIdStr := r.URL.Query().Get("target_argument_id"); targetArgIdStr != "" {
+		if targetID, err := strconv.ParseInt(targetArgIdStr, 10, 64); err == nil {
+			var position int
+
+			calcQuery := `
+				SELECT COUNT(*)
+				FROM arguments
+				WHERE created_at >= (SELECT created_at FROM arguments WHERE id = $1)
+			`
+
+			err := a.DB.QueryRowContext(ctx, calcQuery, targetID).Scan(&position)
+			if err == nil && position > 0 {
+				page = (position + limit - 1) / limit
+			}
+		}
+	}
 	offset := (page - 1) * limit
 
 	var currentUserID int64 = 0
@@ -211,7 +232,7 @@ func (a *App) handleGetArguments(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	ctx := r.Context()
+	//ctx := r.Context()
 
 	cacheKey := fmt.Sprintf("arguments:feed:user:%d:page:%d:limit:%d", currentUserID, page, limit)
 
@@ -702,10 +723,16 @@ func (a *App) handleCreateWatchlist(w http.ResponseWriter, r *http.Request) {
 		_ = a.Redis.Del(ctx, iterTop.Val())
 	}
 
+	watchlistPattern := fmt.Sprintf("arguments:watchlist:user:%d:*", userID)
+	iterWatchlist := a.Redis.Scan(ctx, 0, watchlistPattern, 0).Iterator()
+	for iterWatchlist.Next(ctx) {
+		_ = a.Redis.Del(ctx, iterWatchlist.Val())
+	}
+
 	_ = a.Redis.Del(ctx,
 		//fmt.Sprintf("arguments:feed:user:%d", userID),
 		//fmt.Sprintf("arguments:top:user:%d", userID),
-		fmt.Sprintf("arguments:watchlist:user:%d", userID),
+		//fmt.Sprintf("arguments:watchlist:user:%d", userID),
 		fmt.Sprintf("argument:detail:%d", req.ArgumentID),
 	).Err()
 
@@ -779,7 +806,7 @@ func (a *App) handleGetWatchlist(w http.ResponseWriter, r *http.Request) {
         FROM arguments a
         JOIN watchlist w ON w.argument_id = a.id
         WHERE w.user_id = $1
-        ORDER BY a.logic_score DESC
+        ORDER BY w.created_at DESC
 		LIMIT $2 OFFSET $3
     `
 	rows, err := a.DB.Query(query, userID, limit, offset)
@@ -789,8 +816,9 @@ func (a *App) handleGetWatchlist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rows.Close()
+	var argIDs []int64
 
-	arguments := []ArgumentResponse{}
+	var arguments []ArgumentResponse
 
 	for rows.Next() {
 		var arg ArgumentResponse
@@ -808,34 +836,328 @@ func (a *App) handleGetWatchlist(w http.ResponseWriter, r *http.Request) {
 			arg.Author = "ANONYMOUS_DEV"
 		}
 
+		arguments = append(arguments, arg)
+		argIDs = append(argIDs, int64(arg.ID))
+
+		/*commentQuery := `
+		            SELECT c.id, c.user_id, c.parent_id, c.content, c.author, c.created_at, c.score,
+		                   (SELECT COUNT(*) FROM comment_reactions cr WHERE cr.comment_id = c.id AND cr.reaction_type = 'fire') AS fire_count,
+		                   EXISTS(SELECT 1 FROM comment_reactions cr WHERE cr.comment_id = c.id AND cr.user_id = $2 AND cr.reaction_type = 'fire') AS user_has_fired
+		            FROM comments c
+		            WHERE c.argument_id = $1
+		            ORDER BY c.created_at ASC
+		        `
+				commentRows, err := a.DB.Query(commentQuery, arg.ID, userID)
+				if err != nil {
+					arg.Comments = []*CommentInput{}
+					arguments = append(arguments, arg)
+					continue
+				}
+
+				var flatComments []CommentInput
+				for commentRows.Next() {
+					var cID int64
+					var cUserID sql.NullInt32
+					var parentID sql.NullInt64
+					var content string
+					var cAuthorNull sql.NullString
+					var createdAt time.Time
+					var score int
+					var fireCount int64
+					var userHasFired bool
+
+					if err := commentRows.Scan(&cID, &cUserID, &parentID, &content, &cAuthorNull, &createdAt, &score, &fireCount, &userHasFired); err == nil {
+						var pID *int64
+						if parentID.Valid {
+							val := parentID.Int64
+							pID = &val
+						}
+
+						var authorStr string
+						if cUserID.Valid {
+							authorStr = cAuthorNull.String
+						} else {
+							authorStr = "BOT_REVIEWER"
+						}
+
+						var actualUserID int64
+						if cUserID.Valid {
+							actualUserID = int64(cUserID.Int32)
+						}
+
+						formattedTime := createdAt.Format("2006-01-02 15:04:05")
+
+						flatComments = append(flatComments, CommentInput{
+							ID:           fmt.Sprintf("%d", cID),
+							UserID:       actualUserID,
+							ParentID:     pID,
+							Author:       authorStr,
+							Content:      content,
+							Timestamp:    formattedTime,
+							Score:        score,
+							FireCount:    int(fireCount),
+							UserHasFired: userHasFired,
+							Replies:      []*CommentInput{},
+						})
+					}
+				}
+				if err := commentRows.Err(); err != nil {
+					http.Error(w, "Error iterating comment rows", http.StatusInternalServerError)
+					return
+				}
+				commentRows.Close()
+
+				commentMap := make(map[string]*CommentInput)
+				var rootComments []*CommentInput
+
+				for i := range flatComments {
+					commentMap[flatComments[i].ID] = &flatComments[i]
+				}
+
+				for i := range flatComments {
+					comment := &flatComments[i]
+					if comment.ParentID == nil {
+						rootComments = append(rootComments, comment)
+					} else {
+						parentIDStr := fmt.Sprintf("%d", *comment.ParentID)
+						if parent, exists := commentMap[parentIDStr]; exists {
+							parent.Replies = append(parent.Replies, comment)
+						} else {
+							rootComments = append(rootComments, comment)
+						}
+					}
+				}
+
+				if rootComments == nil {
+					arg.Comments = []*CommentInput{}
+				} else {
+					arg.Comments = rootComments
+				}
+
+				arguments = append(arguments, arg)*/
+	}
+
+	if err := rows.Err(); err != nil {
+		http.Error(w, "Error iterating argument rows", http.StatusInternalServerError)
+		return
+	}
+
+	if arguments == nil {
+		arguments = []ArgumentResponse{}
+	}
+
+	if len(argIDs) > 0 {
 		commentQuery := `
-            SELECT c.id, c.user_id, c.parent_id, c.content, c.author, c.created_at, c.score,
+            SELECT c.id, c.argument_id, c.user_id, c.parent_id, c.content, c.author, c.created_at, c.score,
                    (SELECT COUNT(*) FROM comment_reactions cr WHERE cr.comment_id = c.id AND cr.reaction_type = 'fire') AS fire_count,
                    EXISTS(SELECT 1 FROM comment_reactions cr WHERE cr.comment_id = c.id AND cr.user_id = $2 AND cr.reaction_type = 'fire') AS user_has_fired
             FROM comments c 
-            WHERE c.argument_id = $1 
-            ORDER BY c.created_at ASC
+            WHERE c.argument_id = ANY($1) 
+            ORDER BY c.argument_id, c.created_at ASC
         `
-		commentRows, err := a.DB.Query(commentQuery, arg.ID, userID)
-		if err != nil {
-			arg.Comments = []*CommentInput{}
-			arguments = append(arguments, arg)
-			continue
-		}
 
+		commentRows, err := a.DB.Query(commentQuery, pq.Array(argIDs), userID)
+		if err == nil {
+			defer commentRows.Close()
+
+			commentsByArg := make(map[int64][]CommentInput)
+
+			for commentRows.Next() {
+				var cID int64
+				var argID int64
+				var cUserID sql.NullInt32
+				var parentID sql.NullInt64
+				var content string
+				var cAuthorNull sql.NullString
+				var createdAt time.Time
+				var score int
+				var fireCount int64
+				var userHasFired bool
+
+				if err := commentRows.Scan(&cID, &argID, &cUserID, &parentID, &content, &cAuthorNull, &createdAt, &score, &fireCount, &userHasFired); err == nil {
+					var pID *int64
+					if parentID.Valid {
+						val := parentID.Int64
+						pID = &val
+					}
+
+					authorStr := "BOT_REVIEWER"
+					if cUserID.Valid && cAuthorNull.Valid {
+						authorStr = cAuthorNull.String
+					}
+
+					var actualUserID int64
+					if cUserID.Valid {
+						actualUserID = int64(cUserID.Int32)
+					}
+
+					flatComments := CommentInput{
+						ID:           fmt.Sprintf("%d", cID),
+						UserID:       actualUserID,
+						ParentID:     pID,
+						Author:       authorStr,
+						Content:      content,
+						Timestamp:    createdAt.Format("2006-01-02 15:04:05"),
+						Score:        score,
+						FireCount:    int(fireCount),
+						UserHasFired: userHasFired,
+						Replies:      []*CommentInput{},
+					}
+
+					commentsByArg[argID] = append(commentsByArg[argID], flatComments)
+				}
+			}
+			if err := commentRows.Err(); err != nil {
+				log.Printf("Comment rows iteration error: %v", err)
+				http.Error(w, "Error iterating comment rows", http.StatusInternalServerError)
+				return
+			}
+
+			for i := range arguments {
+				flatList := commentsByArg[int64(arguments[i].ID)]
+				if len(flatList) == 0 {
+					arguments[i].Comments = []*CommentInput{}
+					continue
+				}
+
+				commentMap := make(map[string]*CommentInput)
+				var rootComments []*CommentInput
+
+				for j := range flatList {
+					commentMap[flatList[j].ID] = &flatList[j]
+				}
+
+				for j := range flatList {
+					comment := &flatList[j]
+					if comment.ParentID == nil {
+						rootComments = append(rootComments, comment)
+					} else {
+						parentIDStr := fmt.Sprintf("%d", *comment.ParentID)
+						if parent, exists := commentMap[parentIDStr]; exists {
+							parent.Replies = append(parent.Replies, comment)
+						} else {
+							rootComments = append(rootComments, comment)
+						}
+					}
+				}
+
+				arguments[i].Comments = rootComments
+			}
+		}
+	}
+
+	type PaginatedResponse struct {
+		Arguments []ArgumentResponse `json:"watchlist"`
+		Total     int                `json:"total"`
+	}
+
+	responsePayload := PaginatedResponse{
+		Arguments: arguments,
+		Total:     totalCount,
+	}
+
+	responseBytes, err := json.Marshal(responsePayload)
+	if err != nil {
+		log.Printf("JSON marshal error: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	_ = a.Redis.Set(ctx, cacheKey, responseBytes, 60*time.Second).Err()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write(responseBytes)
+	//json.NewEncoder(w).Encode(arguments)
+}
+
+func (a *App) handleGetArgument(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	idStr := r.PathValue("id")
+	argumentID, err := strconv.Atoi(idStr)
+	if err != nil {
+		http.Error(w, "Invalid argument ID", http.StatusBadRequest)
+		return
+	}
+
+	var currentUserID int64 = 0
+	authHeader := r.Header.Get("Authorization")
+	if authHeader != "" {
+		parts := strings.SplitN(authHeader, " ", 2)
+		if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
+			if claims, err := a.parseToken(parts[1]); err == nil {
+				if userIDFloat, ok := claims["user_id"].(float64); ok {
+					currentUserID = int64(userIDFloat)
+				}
+			}
+		}
+	}
+
+	ctx := r.Context()
+
+	query := `
+		SELECT a.id, a.user_id, a.title, a.content, a.logic_score, a.author, a.created_at,
+		a.logic_score AS plan_score,
+		CASE WHEN w.user_id IS NOT NULL THEN true ELSE false END AS is_watched
+		FROM arguments a
+		LEFT JOIN watchlist w ON w.argument_id = a.id AND w.user_id = $1
+		WHERE a.id = $2
+	`
+
+	var arg ArgumentResponse
+	var rawUserID sql.NullInt32
+	var authorNull sql.NullString
+
+	err = a.DB.QueryRowContext(ctx, query, currentUserID, argumentID).Scan(
+		&arg.ID, &rawUserID, &arg.Title, &arg.Content, &arg.LogicScore, &authorNull, &arg.CreatedAt, &arg.PlanScore, &arg.IsWatched,
+	)
+
+	if err == sql.ErrNoRows {
+		http.Error(w, "Argument not found", http.StatusNotFound)
+		return
+	} else if err != nil {
+		log.Printf("Fetch single argument error: %v", err)
+		http.Error(w, "Failed to fetch argument", http.StatusInternalServerError)
+		return
+	}
+
+	if authorNull.Valid && authorNull.String != "" {
+		arg.Author = authorNull.String
+	} else {
+		arg.Author = "ANONYMOUS_DEV"
+	}
+
+	commentQuery := `
+		SELECT c.id, c.user_id, c.parent_id, c.content, c.author, c.created_at, c.score,
+			   (SELECT COUNT(*) FROM comment_reactions cr WHERE cr.comment_id = c.id AND cr.reaction_type = 'fire') AS fire_count,
+			   EXISTS(SELECT 1 FROM comment_reactions cr WHERE cr.comment_id = c.id AND cr.user_id = $2 AND cr.reaction_type = 'fire') AS user_has_fired
+		FROM comments c 
+		WHERE c.argument_id = $1 
+		ORDER BY c.created_at ASC
+	`
+	commentRows, err := a.DB.QueryContext(ctx, commentQuery, argumentID, currentUserID)
+	if err != nil {
+		arg.Comments = []*CommentInput{}
+	} else {
+		defer commentRows.Close()
 		var flatComments []CommentInput
+
 		for commentRows.Next() {
 			var cID int64
 			var cUserID sql.NullInt32
 			var parentID sql.NullInt64
 			var content string
-			var cAuthorNull sql.NullString
+			var authorNull sql.NullString
 			var createdAt time.Time
 			var score int
 			var fireCount int64
 			var userHasFired bool
 
-			if err := commentRows.Scan(&cID, &cUserID, &parentID, &content, &cAuthorNull, &createdAt, &score, &fireCount, &userHasFired); err == nil {
+			if err := commentRows.Scan(&cID, &cUserID, &parentID, &content, &authorNull, &createdAt, &score, &fireCount, &userHasFired); err == nil {
 				var pID *int64
 				if parentID.Valid {
 					val := parentID.Int64
@@ -844,7 +1166,7 @@ func (a *App) handleGetWatchlist(w http.ResponseWriter, r *http.Request) {
 
 				var authorStr string
 				if cUserID.Valid {
-					authorStr = cAuthorNull.String
+					authorStr = authorNull.String
 				} else {
 					authorStr = "BOT_REVIEWER"
 				}
@@ -854,15 +1176,13 @@ func (a *App) handleGetWatchlist(w http.ResponseWriter, r *http.Request) {
 					actualUserID = int64(cUserID.Int32)
 				}
 
-				formattedTime := createdAt.Format("2006-01-02 15:04:05")
-
 				flatComments = append(flatComments, CommentInput{
 					ID:           fmt.Sprintf("%d", cID),
 					UserID:       actualUserID,
 					ParentID:     pID,
 					Author:       authorStr,
 					Content:      content,
-					Timestamp:    formattedTime,
+					Timestamp:    createdAt.Format("2006-01-02 15:04:05"),
 					Score:        score,
 					FireCount:    int(fireCount),
 					UserHasFired: userHasFired,
@@ -871,10 +1191,10 @@ func (a *App) handleGetWatchlist(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if err := commentRows.Err(); err != nil {
-			http.Error(w, "Error iterating comment rows", http.StatusInternalServerError)
+			log.Printf("Comment rows iteration error: %v", err)
+			http.Error(w, "Database error", http.StatusInternalServerError)
 			return
 		}
-		commentRows.Close()
 
 		commentMap := make(map[string]*CommentInput)
 		var rootComments []*CommentInput
@@ -902,40 +1222,9 @@ func (a *App) handleGetWatchlist(w http.ResponseWriter, r *http.Request) {
 		} else {
 			arg.Comments = rootComments
 		}
-
-		arguments = append(arguments, arg)
 	}
-
-	if err := rows.Err(); err != nil {
-		http.Error(w, "Error iterating argument rows", http.StatusInternalServerError)
-		return
-	}
-
-	if arguments == nil {
-		arguments = []ArgumentResponse{}
-	}
-
-	type PaginatedResponse struct {
-		Arguments []ArgumentResponse `json:"watchlist"`
-		Total     int                `json:"total"`
-	}
-
-	responsePayload := PaginatedResponse{
-		Arguments: arguments,
-		Total:     totalCount,
-	}
-
-	responseBytes, err := json.Marshal(responsePayload)
-	if err != nil {
-		log.Printf("JSON marshal error: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	_ = a.Redis.Set(ctx, cacheKey, responseBytes, 60*time.Second).Err()
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	w.Write(responseBytes)
-	//json.NewEncoder(w).Encode(arguments)
+	json.NewEncoder(w).Encode(arg)
 }

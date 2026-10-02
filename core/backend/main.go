@@ -129,6 +129,7 @@ func main() {
 
 	mux.HandleFunc("POST /api/arguments", app.authMiddleware(app.handleCreateArgument))
 	mux.HandleFunc("GET /api/arguments", app.handleGetArguments)
+	mux.HandleFunc("GET /api/arguments/{id}", app.handleGetArgument)
 	mux.HandleFunc("POST /api/comments", app.authMiddleware(RateLimitMiddleware(app.handleCreateComment)))
 
 	mux.HandleFunc("/ws", app.WebSocketHandler)
@@ -137,49 +138,6 @@ func main() {
 	mux.HandleFunc("GET /api/comments", app.handleGetComments)
 
 	mux.HandleFunc("GET /api/user/profile", app.authMiddleware(app.handleGetProfile))
-
-	/*mux.HandleFunc("GET /api/auth/me", app.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
-		claims, ok := r.Context().Value(claimsKey).(jwt.MapClaims)
-		if !ok {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
-
-		role, _ := claims["role"].(string)
-
-		if role == "viewer" {
-			username, _ := claims["username"].(string)
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"id":       0,
-				"username": username,
-				"role":     "viewer",
-			})
-			return
-		}
-
-		userID := r.Context().Value(userIDKey).(int)
-
-		var id int
-		var username string
-		var dbRole string
-
-		err := app.DB.QueryRow("SELECT id, username, role FROM users WHERE id = $1", userID).Scan(&id, &username, &dbRole)
-		if err != nil {
-			if err == sql.ErrNoRows {
-				http.Error(w, "User not found", http.StatusNotFound)
-				return
-			}
-			http.Error(w, "Database error", http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"id":       id,
-			"username": username,
-			"role":     dbRole,
-		})
-	}))*/
 
 	mux.HandleFunc("GET /api/notifications", app.authMiddleware(app.handleGetNotifications))
 	mux.HandleFunc("PATCH /api/notifications/{id}/read", app.authMiddleware(app.handleMarkNotificationRead))
