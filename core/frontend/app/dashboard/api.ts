@@ -44,7 +44,9 @@ api.interceptors.response.use(
     async (error) => {
         const originalRequest = error.config;
 
-        if (originalRequest.url?.includes('/api/login') || originalRequest.url?.includes('/api/refresh') || originalRequest.url?.includes('/api/viewer'))
+        const isViewer = typeof window !== 'undefined' && sessionStorage.getItem('sessionRole') === 'viewer';
+
+        if (originalRequest.url?.includes('/api/login') || originalRequest.url?.includes('/api/refresh') || originalRequest.url?.includes('/api/viewer') || isViewer)
         {return Promise.reject(error)};
 
         if (error.response?.status === 401 && !originalRequest._retry) {

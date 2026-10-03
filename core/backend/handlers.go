@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,51 @@ import (
 
 	gonanoid "github.com/matoous/go-nanoid/v2"
 )
+
+var (
+	cookieSecure   = getCookieSecure()
+	cookieSameSite = getCookieSameSite()
+)
+
+func getCookieSecure() bool {
+	secure, _ := strconv.ParseBool(os.Getenv("COOKIE_SECURE"))
+	return secure
+}
+
+func getCookieSameSite() http.SameSite {
+	switch os.Getenv("COOKIE_SAMESITE") {
+	case "strict":
+		return http.SameSiteStrictMode
+	case "none":
+		return http.SameSiteNoneMode
+	default:
+		return http.SameSiteLaxMode
+	}
+}
+
+func SetCookie(w http.ResponseWriter, name, value string, expiresAt time.Time) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     name,
+		Value:    value,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   cookieSecure,
+		SameSite: cookieSameSite,
+		Expires:  expiresAt,
+	})
+}
+
+func ClearCookie(w http.ResponseWriter, name string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     name,
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   cookieSecure,
+		SameSite: cookieSameSite,
+		MaxAge:   -1,
+	})
+}
 
 type contextKey string
 
@@ -668,15 +714,17 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}*/
 
-	http.SetCookie(w, &http.Cookie{
+	/*http.SetCookie(w, &http.Cookie{
 		Name:     "refresh_token_swing",
 		Value:    refreshToken,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   false,
-		SameSite: http.SameSiteLaxMode,
+		Secure:   secure,
+		SameSite: sameSiteMode,
 		Expires:  expiresAt,
-	})
+	})*/
+
+	SetCookie(w, "refresh_token_swing", refreshToken, expiresAt)
 
 	/*tokenString, err := generateJWT(user.Id) // old method
 	if err != nil {
@@ -768,7 +816,12 @@ func (a *App) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 
 func EnableCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
+		origin := r.Header.Get("Origin")
+		if origin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+		} else {
+			w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
+		}
 		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, PATCH, DELETE")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -1072,7 +1125,7 @@ func (a *App) handleViewerMode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.SetCookie(w, &http.Cookie{
+	/*http.SetCookie(w, &http.Cookie{
 		Name:     "refresh_token_swing",
 		Value:    "",
 		Path:     "/",
@@ -1080,7 +1133,9 @@ func (a *App) handleViewerMode(w http.ResponseWriter, r *http.Request) {
 		Secure:   false,
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   -1,
-	})
+	})*/
+
+	ClearCookie(w, "refresh_token_swing")
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -1102,7 +1157,7 @@ func generateViewerAccessToken(username string) (string, error) {
 		"username": username,
 		"role":     "viewer",
 		"type":     "access",
-		"exp":      time.Now().Add(time.Minute * 5).Unix(),
+		"exp":      time.Now().Add(time.Hour * 24).Unix(),
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -1163,7 +1218,7 @@ func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Printf("Out -> Name: %s, ID: %d\n", username, userID)
 
-	http.SetCookie(w, &http.Cookie{
+	/*http.SetCookie(w, &http.Cookie{
 		Name:     "refresh_token_swing",
 		Value:    "",
 		Path:     "/",
@@ -1171,7 +1226,8 @@ func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 		Secure:   false,
 		SameSite: http.SameSiteLaxMode,
-	})
+	})*/
+	ClearCookie(w, "refresh_token_swing")
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

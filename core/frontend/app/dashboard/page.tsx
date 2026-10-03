@@ -275,6 +275,7 @@ function Home() {
 
             const sessionViewerName = sessionStorage.getItem('viewer_username');
             const sessionRole = sessionStorage.getItem('user_role');
+            const sessionViewerToken = sessionStorage.getItem('viewer_access_token');
 
             let fetchedRole = 'user';
             let token = getMemoryAccessToken();
@@ -287,28 +288,43 @@ function Home() {
                     logicScore: 0
                 });
                 fetchedRole = 'viewer';
-            } else {
-            if (!token) {
+
+                if (!token && sessionViewerToken) {
+                    setMemoryAccessToken(sessionViewerToken);
+                    token = sessionViewerToken;
+            } else if (!token) {
+
                 try {
-                    const refreshRes = await api.post('/api/refresh');
-                    token = refreshRes.data.access_token;
+                    const viewerRes = await api.post('/api/viewer');
+                    const newToken = viewerRes.data.access_token as string;
                     setMemoryAccessToken(token);
-
-                    const profileRes = await api.get('/api/user/profile');
-                    setUser(profileRes.data);
-                } catch (err: any) {
-
-                    if (err.response && err.response.status === 401) {
-                        setUser(null);
-                        setMemoryAccessToken(null);
-                    } else {
-                        console.warn("Network hiccup during session init, keeping previous state", err);
-                    }
-                    //console.log("No active session found. Running as guest");
-                } finally {
-                    setIsLoading(false);
+                    sessionStorage.setItem('viewer_access_token', newToken);
+                    token = newToken;
+                } catch (e) {
+                    console.error("Failed to restore viewer session", e);
                 }
             }
+            } else {
+                if (!token) {
+                    try {
+                        const refreshRes = await api.post('/api/refresh');
+                        token = refreshRes.data.access_token;
+                        setMemoryAccessToken(token);
+
+                        const profileRes = await api.get('/api/user/profile');
+                        setUser(profileRes.data);
+                    } catch (err: any) {
+                        if (err.response && err.response.status === 401) {
+                            setUser(null);
+                            setMemoryAccessToken(null);
+                        } else {
+                            console.warn("Network hiccup during session init, keeping previous state", err);
+                        }
+                        //console.log("No active session found. Running as guest");
+                    } finally {
+                        setIsLoading(false);
+                    }
+                }
 
             if (token) {
                 try {
@@ -478,6 +494,11 @@ function Home() {
             if (isMounted) {
                 setIsLoading(false); 
                 setIsAuthInitialized(true);
+
+                const sessionRole = sessionStorage.getItem('user_role');
+                if (!getMemoryAccessToken() && sessionRole !== 'viewer') {
+                    router.push('/');
+                }
             }
         }
         };
@@ -682,19 +703,28 @@ function Home() {
     };
 
     const handleShowNewArguments = () => { //suspect 2
-        setArgumentsList(existingArguments => [
-            ...pendingArguments,
+        setArgumentsList(existingArguments => {
+            const existingIds = new Set(existingArguments.map(arg => arg.id));
+            
+            const uniqueNewArgs = pendingArguments.filter(arg => !existingIds.has(arg.id));
+            
+            return [
+            ...uniqueNewArgs,
             ...existingArguments
-        ]);
+        ]
+    });
         setPendingArguments([]);
         setNewCount(0);
 
         window.scrollTo({ top: 0, behavior: 'smooth' });
     };
+    
+    const safePendingArgs = pendingArguments.filter(arg => arg.author !== currentUsername);
+    const effectiveNewCount = safePendingArgs.length;
 
     return (
     <main className="h-[100dvh] w-full bg-black text-zinc-100 font-mono p-6 md:p-12 flex justify-center overflow-hidden box-border">
-        {isLoading ? (
+        {isLoading || !isAuthInitialized ? (
             <div className="w-full h-full flex flex-col justify-center items-center gap-3">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-500"></div>
                 <span className="text-xs text-zinc-500 tracking-widest uppercase">Initializing Session...</span>
@@ -813,13 +843,13 @@ function Home() {
                         </div>
                     </div>
                         <div className="flex-1 min-h-0 overflow-y-auto space-y-4 pr-2 pb-6 relative [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-                        {newCount > 0 && (
+                        {effectiveNewCount > 0 && (
                             <div className="absolute top-2 left-0 right-0 flex justify-center z-30 pointer-events-none">
                                 <button
                                     onClick={handleShowNewArguments}
                                     className="pointer-events-auto bg-black/90 backdrop-blur-md border border-blue-500/40 text-blue-400 px-3.5 py-1 rounded-full shadow-lg text-[11px] font-mono hover:bg-blue-950/80 hover:border-blue-400 transition-all flex items-center gap-1.5"
                                 >
-                                    <span>↑</span> {newCount} new argument{newCount > 1 ? 's' : ''}
+                                    <span>↑</span> {effectiveNewCount} new argument{effectiveNewCount > 1 ? 's' : ''}
                                 </button>
                             </div>
                         )}
@@ -968,6 +998,7 @@ function Home() {
                         </div>
                     )}
 
+                    {!isViewer && isLoggedIn && (
                     <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-5 flex flex-col gap-3 shrink-0">
                         <h2 className="text-xs font-bold tracking-wider uppercase text-zinc-200">
                             User Stats:
@@ -987,6 +1018,7 @@ function Home() {
                             </div>
                         </div>
                     </div>
+                    )}
 
                     {!isViewer && isLoggedIn && (
                         <div className="flex items-center gap-4 shrink-0">

@@ -39,7 +39,7 @@ export function ReviewModal({ isReviewOpen, selectedArgument, selectedArgumentId
     const pathname = usePathname();
     const searchParams = useSearchParams();
 
-    
+    const activeArg = selectedArgument || detailedArgument;
 
     const handleLocalAddReply = async (targetId: string, savedComment: any) => {
         if (handleAddReply) {
@@ -141,6 +141,12 @@ export function ReviewModal({ isReviewOpen, selectedArgument, selectedArgumentId
             }, 300);
         }
     }, [isReviewOpen, targetCommentId, detailedArgument]);
+
+    useEffect(() => {
+        if (isReviewOpen && argumentId) {
+            fetchStats();
+        }
+    }, [activeArg?.comments?.length]);
 
     /*useEffect(() => {
         const argumentId = searchParams.get('argumentId');
@@ -278,8 +284,6 @@ export function ReviewModal({ isReviewOpen, selectedArgument, selectedArgumentId
     const chartData = getCombinedChartData();
 
     if (!isReviewOpen || (!selectedArgument && !searchParams.get('argumentId'))) return null;
-
-    const activeArg = selectedArgument || detailedArgument;
 
     if (!activeArg) {
         return (
