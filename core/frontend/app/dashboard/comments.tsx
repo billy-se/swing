@@ -16,9 +16,11 @@ interface CommentFuncProps {
             user_id?: number; 
             author?: string 
         }) => void;
+    onFire?: () => void;
+    fetchUserStats?: () => Promise<void>;
 }
 
-export function CommentFunc({ processedComment, argumentId, targetCommentId, onAddReply }: CommentFuncProps) {
+export function CommentFunc({ processedComment, argumentId, targetCommentId, onAddReply, onFire, fetchUserStats}: CommentFuncProps) {
     const [isReplying, setIsReplying] = useState(false);
     const [replyText, setReplyText] = useState("");
     const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -92,6 +94,10 @@ export function CommentFunc({ processedComment, argumentId, targetCommentId, onA
         try {
             const response = await api.post(`/api/comments/fire`, { comment_id: Number(processedComment.id) });
             if (response.data && response.data.fire_count !== undefined) setFireCount(response.data.fire_count);
+            
+            if (onFire) onFire();
+            
+            if (fetchUserStats) await fetchUserStats();
         } catch (error) {
             console.error("Error sending fire reaction:", error);
         }
@@ -140,7 +146,7 @@ export function CommentFunc({ processedComment, argumentId, targetCommentId, onA
                 )}
 
                 <div className="flex items-center gap-4 mt-2">
-                    {isLoggedIn && !isViewer && (
+                    {isLoggedIn && !isViewer && !isOwnComment && (
                         <button
                             onClick={handleFireClick}
                             className="text-[10px] flex items-center gap-1 text-zinc-400 hover:text-orange-400 transition-colors">
@@ -183,6 +189,8 @@ export function CommentFunc({ processedComment, argumentId, targetCommentId, onA
                                         onAddReply(String(processedComment.id), response.data);
                                     }
 
+                                    if (fetchUserStats) await fetchUserStats();
+
                                     setReplyText("");
                                     setIsReplying(false);
                                 } catch (err) {
@@ -205,6 +213,8 @@ export function CommentFunc({ processedComment, argumentId, targetCommentId, onA
                             argumentId={argumentId} 
                             targetCommentId={targetCommentId}
                             onAddReply={onAddReply} 
+                            onFire={onFire}
+                            fetchUserStats={fetchUserStats}
                         />
                     ))}
                 </div>
@@ -216,9 +226,10 @@ export function CommentFunc({ processedComment, argumentId, targetCommentId, onA
 interface PrimaryCommentInputProps {
     argumentId: string | number;
     onAddReply: (commentId: string, savedComment: { id: number; content: string; created_at: string; user_id?: number; author?: string }) => void;
+    fetchUserStats?: () => Promise<void>;
 }
 
-export function PrimaryCommentInput({ argumentId, onAddReply }: PrimaryCommentInputProps) {
+export function PrimaryCommentInput({ argumentId, onAddReply, fetchUserStats }: PrimaryCommentInputProps) {
     const [primaryText, setPrimaryText] = useState("");
     const [isLoggedIn, setIsLoggedIn] = useState(false);
     const [isViewer, setIsViewer] = useState(false);
@@ -291,6 +302,8 @@ export function PrimaryCommentInput({ argumentId, onAddReply }: PrimaryCommentIn
                         if (response.data) {
                             onAddReply("root-id", response.data);
                         }
+
+                        if (fetchUserStats) await fetchUserStats();
 
                         setPrimaryText("");
                     } catch (err) {

@@ -104,3 +104,54 @@ func (a *App) handleShowStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 }
+
+type UserStatsResponse struct {
+	UserID                 int `json:"user_id"`
+	ArgumentsCount         int `json:"argumentsCount"`
+	UniqueDiscussionsCount int `json:"uniqueDiscussionsCount"`
+	FiresGivenCount        int `json:"firesGivenCount"`
+}
+
+func (a *App) handleUserStats(w http.ResponseWriter, r *http.Request) {
+	userIdStr := r.URL.Query().Get("user_id")
+	if userIdStr == "" {
+		http.Error(w, "Missing user_id parameter", http.StatusBadRequest)
+		return
+	}
+
+	userId, err := strconv.Atoi(userIdStr)
+	if err != nil {
+		http.Error(w, "Invalid user_id format", http.StatusBadRequest)
+		return
+	}
+
+	var stats UserStatsResponse
+	stats.UserID = userId
+
+	queryArgs := `SELECT COUNT(*) FROM arguments WHERE user_id = $1;`
+	err = a.DB.QueryRow(queryArgs, userId).Scan(&stats.ArgumentsCount)
+	if err != nil {
+		http.Error(w, "Database error (Arguments): "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	queryDiscussions := `SELECT COUNT(DISTINCT argument_id) FROM comments WHERE user_id = $1;`
+	err = a.DB.QueryRow(queryDiscussions, userId).Scan(&stats.UniqueDiscussionsCount)
+	if err != nil {
+		http.Error(w, "Database error (Discussions): "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	queryFires := `SELECT COUNT(*) FROM comment_reactions WHERE user_id = $1 AND reaction_type = 'fire';`
+	err = a.DB.QueryRow(queryFires, userId).Scan(&stats.FiresGivenCount)
+	if err != nil {
+		http.Error(w, "Database error (Fires Given): "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(stats); err != nil {
+		return
+	}
+}

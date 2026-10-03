@@ -154,6 +154,7 @@ func main() {
 	mux.HandleFunc("POST /api/heartbeat", app.handleHeartbeat)
 
 	mux.HandleFunc("GET /api/stats", app.authMiddleware(app.handleShowStats))
+	mux.HandleFunc("GET /api/user/stats", app.authMiddleware(app.handleUserStats))
 
 	handler := EnableCORS(mux)
 

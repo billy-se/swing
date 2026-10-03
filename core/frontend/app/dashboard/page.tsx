@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, Suspense } from 'react';
-import { Comment, Argument, NotificationItem, RawComment, UserProfile } from './types';
+import { Comment, Argument, NotificationItem, RawComment, UserProfile, UserStats } from './types';
 import { ReviewModal } from './reviewModal';
 import { CreateArgumentModal } from './createModal';
 import { api, setMemoryAccessToken, getMemoryAccessToken } from '@/app/dashboard/api';
@@ -52,6 +52,8 @@ function Home() {
     const [pendingArguments, setPendingArguments] = useState<Argument[]>([]);
     const [newCount, setNewCount] = useState(0);
     const [maxPage, setMaxPage] = useState<number | null>(null);
+
+    const [userStats, setUserStats] = useState<UserStats | null>(null);
 
     const mapComments = (commentsList: RawComment[]): Comment[] => {
         if (!Array.isArray(commentsList)) return [];
@@ -591,6 +593,20 @@ function Home() {
         return () => window.removeEventListener('hashchange', handleHashChange);
     }, [isReviewOpen]); // under construction
 
+    
+    const fetchUserStats = async () => {
+        try {
+            const response = await api.get('/api/user/stats?user_id=1');
+            setUserStats(response.data);
+        } catch (err) {
+            console.error("Failed to fetch user stats:", err);
+        }
+    };
+
+    useEffect(() => {
+        fetchUserStats();
+    }, []);
+
     const handleAddReply = (argumentId: string, incomingComment: { id: number; content: string; created_at: string; user_id?: number }) => {
         if (!selectedArgumentId) return;
 
@@ -657,6 +673,8 @@ function Home() {
             setNewContent("");
             setIsCreateOpen(false);
 
+            if (fetchUserStats) fetchUserStats();
+
         } catch (err: any) {
             const errorMsg = err.response?.data || err.message || 'Failed to create argument';
             setError(typeof errorMsg === 'string' ? errorMsg : JSON.stringify(errorMsg));
@@ -718,6 +736,7 @@ function Home() {
                                         <div
                                             key={notif.id}
                                             onClick={async () => {
+                                                try {
                                                 if (!notif.is_read && notif.id !== undefined && notif.id !== null) {
                                                     await markNotificationAsRead(Number(notif.id));
                                                     setNotifications(prev =>
@@ -731,18 +750,23 @@ function Home() {
                                                     setSelectedArgumentId(Number(notif.argument_id));
                                                     setTargetCommentId(notif.comment_id || null);
                                                     setIsReviewOpen(true);
-                                                    
-                                                    const currentParams = new URLSearchParams(window.location.search);
-                                                    currentParams.set('argumentId', String(notif.argument_id));
-                                                    if (notif.comment_id) {
-                                                        currentParams.set('commentId', String(notif.comment_id));
-                                                    } else {
-                                                        currentParams.delete('commentId');
-                                                    }
 
-                                                    window.history.replaceState(null, '', `?${currentParams.toString()}`);
+                                                    setTimeout(() => {
+                                                        const currentParams = new URLSearchParams(window.location.search);
+                                                        currentParams.set('argumentId', String(notif.argument_id));
+                                                        if (notif.comment_id) {
+                                                            currentParams.set('commentId', String(notif.comment_id));
+                                                        } else {
+                                                            currentParams.delete('commentId');
+                                                        }
+
+                                                        window.history.replaceState(null, '', `?${currentParams.toString()}`);
+                                                    }, 0);
                                                 }
-                                            }}
+                                            } catch (err) {
+                                                console.error("Error handling old notification click:", err);
+                                            }
+                                        }}
                                             className={`text-[11px] py-2 px-2 border-b border-zinc-800 last:border-0 cursor-pointer transition-colors ${notif.is_read ? 'text-zinc-400 bg-transparent' : 'text-zinc-100 bg-zinc-800 font-semibold'}`}
                                         >
                                             <p>{notif.content}</p>
@@ -946,20 +970,20 @@ function Home() {
 
                     <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-5 flex flex-col gap-3 shrink-0">
                         <h2 className="text-xs font-bold tracking-wider uppercase text-zinc-200">
-                            Stats:
+                            User Stats:
                         </h2>
                         <div className="flex flex-col gap-2 text-xs text-zinc-400">
                             <div className="flex justify-between">
-                                <span>Peer Reviews Given:</span>
-                                <span className="text-zinc-200">14</span>
+                                <span>Arguments Posted:</span>
+                                <span className="text-zinc-200">{userStats?.argumentsCount || 0}</span>
                             </div>
                             <div className="flex justify-between">
-                                <span>Logic Consensus Rate:</span>
-                                <span className="text-emerald-400">89%</span>
+                                <span>Discussions Joined:</span>
+                                <span className="text-zinc-200">{userStats?.uniqueDiscussionsCount || 0}</span>
                             </div>
                             <div className="flex justify-between">
-                                <span>Anonymity Integrity:</span>
-                                <span className="text-blue-400">Secure</span>
+                                <span>Fires Given:</span>
+                                <span className="text-orange-400 font-semibold">{userStats?.firesGivenCount || 0} 🔥</span>
                             </div>
                         </div>
                     </div>
@@ -984,6 +1008,8 @@ function Home() {
                 targetCommentId={targetCommentId}
                 setIsReviewOpen={setIsReviewOpen}
                 handleAddReply={handleAddReply}
+                userStats={userStats}
+                fetchUserStats={fetchUserStats}
             />
 
             {isLoggedIn && !isViewer && (

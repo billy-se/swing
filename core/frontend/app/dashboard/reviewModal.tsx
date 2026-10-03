@@ -22,9 +22,11 @@ interface ReviewModalProps {
             author?: string; 
         }
     ) => void;
+    userStats: any;
+    fetchUserStats: () => Promise<void>;
 }
 
-export function ReviewModal({ isReviewOpen, selectedArgument, selectedArgumentId, targetCommentId, setIsReviewOpen, handleAddReply }: ReviewModalProps) {
+export function ReviewModal({ isReviewOpen, selectedArgument, selectedArgumentId, targetCommentId, setIsReviewOpen, handleAddReply, userStats, fetchUserStats }: ReviewModalProps) {
     const [stats, setStats] = useState<any>(null);
     const [detailedArgument, setDetailedArgument] = useState<Argument | null>(null);
 
@@ -37,8 +39,14 @@ export function ReviewModal({ isReviewOpen, selectedArgument, selectedArgumentId
     const pathname = usePathname();
     const searchParams = useSearchParams();
 
-    const handleLocalAddReply = (targetId: string, savedComment: any) => {
-        handleAddReply(targetId, savedComment);
+    
+
+    const handleLocalAddReply = async (targetId: string, savedComment: any) => {
+        if (handleAddReply) {
+            handleAddReply(targetId, savedComment);
+        }
+        await fetchStats();
+        await fetchUserStats();
 
         setDetailedArgument(prev => {
             if (!prev) return prev;
@@ -84,37 +92,39 @@ export function ReviewModal({ isReviewOpen, selectedArgument, selectedArgumentId
         });
     };
 
-    useEffect(() => {
-        const argumentId = selectedArgument?.id || selectedArgumentId || searchParams.get('argumentId');
+    const argumentId = selectedArgument?.id || selectedArgumentId || searchParams.get('argumentId');
 
+    const fetchStats = async () => {
         if (!argumentId) {
             setStats(null);
             setDetailedArgument(null);
             return;
         }
 
-        async function fetchStats() {
-            try {
-                const [statsRes, argRes] = await Promise.all([
-                    api.get(`/api/stats?argument_id=${argumentId}`),
-                    api.get(`/api/arguments/${argumentId}`)]);
+        try {
+            const [statsRes, argRes] = await Promise.all([
+                api.get(`/api/stats?argument_id=${argumentId}`),
+                api.get(`/api/arguments/${argumentId}`)
+            ]);
 
-                setStats(statsRes.data);
+            setStats(statsRes.data);
 
-                const fetchedArg = argRes.data;
-                if (fetchedArg && fetchedArg.comments) {
-                    fetchedArg.comments = [...fetchedArg.comments].reverse();
-                }
-
-                setDetailedArgument(argRes.data);
-            } catch (err) {
-                console.error("Failed to fetch argument stats:", err);
-                setStats(null);
-                setDetailedArgument(selectedArgument);
+            const fetchedArg = argRes.data;
+            if (fetchedArg && fetchedArg.comments) {
+                fetchedArg.comments = [...fetchedArg.comments].reverse();
             }
+
+            setDetailedArgument(argRes.data);
+        } catch (err) {
+            console.error("Failed to fetch argument stats:", err);
+            setStats(null);
+            setDetailedArgument(selectedArgument);
         }
+    };
+
+    useEffect(() => {
         fetchStats();
-    }, [selectedArgument?.id, selectedArgumentId, searchParams]);
+    }, [argumentId, searchParams]);
 
     useEffect(() => {
         if (isReviewOpen && targetCommentId && detailedArgument) {
@@ -427,6 +437,7 @@ export function ReviewModal({ isReviewOpen, selectedArgument, selectedArgumentId
                                 argumentId={activeArg.id}
                                 targetCommentId={targetCommentId}
                                 onAddReply={handleLocalAddReply} 
+                                onFire={fetchStats}
                             />
                         ))
                     ) : (

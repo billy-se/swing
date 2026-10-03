@@ -67,3 +67,9 @@ export interface ArgumentStatsResponse {
     comment_volume: TimeSeriesPoint[];
     fire_reactions: TimeSeriesPoint[];
 }
+
+export interface UserStats {
+    argumentsCount: number;
+    uniqueDiscussionsCount: number;
+    firesGivenCount: number;
+}
