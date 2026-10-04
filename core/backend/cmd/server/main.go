@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 	"vaine-backend/db"
@@ -66,11 +67,27 @@ func main() {
 		redisAddr = "localhost:6379"
 	}
 
-	rdb := redis.NewClient(&redis.Options{
+	var opt *redis.Options
+	var err error
+
+	if strings.HasPrefix(redisAddr, "redis://") || strings.HasPrefix(redisAddr, "rediss://") {
+		opt, err = redis.ParseURL(redisAddr)
+		if err != nil {
+			panic(err)
+		}
+	} else {
+		opt = &redis.Options{
+			Addr: redisAddr,
+		}
+	}
+
+	rdb := redis.NewClient(opt)
+
+	/*rdb := redis.NewClient(&redis.Options{
 		Addr:     redisAddr,
 		Password: "",
 		DB:       0,
-	})
+	})*/
 
 	//server struct
 	app := &App{
