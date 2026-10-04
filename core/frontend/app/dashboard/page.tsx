@@ -616,8 +616,10 @@ function Home() {
 
     
     const fetchUserStats = async () => {
+        if (!user?.id) return;
+
         try {
-            const response = await api.get('/api/user/stats?user_id=1');
+            const response = await api.get(`/api/user/stats?user_id=${user.id}`);
             setUserStats(response.data);
         } catch (err) {
             console.error("Failed to fetch user stats:", err);
@@ -625,8 +627,8 @@ function Home() {
     };
 
     useEffect(() => {
-        fetchUserStats();
-    }, []);
+        if (user?.id) fetchUserStats();
+    }, [user?.id]);
 
     const handleAddReply = (argumentId: string, incomingComment: { id: number; content: string; created_at: string; user_id?: number }) => {
         if (!selectedArgumentId) return;

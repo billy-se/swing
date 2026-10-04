@@ -442,6 +442,7 @@ export function ReviewModal({ isReviewOpen, selectedArgument, selectedArgumentId
                                 targetCommentId={targetCommentId}
                                 onAddReply={handleLocalAddReply} 
                                 onFire={fetchStats}
+                                fetchUserStats={fetchUserStats}
                             />
                         ))
                     ) : (
