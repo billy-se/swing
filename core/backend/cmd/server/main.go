@@ -114,6 +114,12 @@ func main() {
 	//server start
 	log.Printf("Server running on port %s..\n", cfg.Port)
 
+	//backend live demo
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("Backend is running! no more 404"))
+	})
+
 	srv := &http.Server{
 		Addr:         ":" + cfg.Port,
 		Handler:      handler,

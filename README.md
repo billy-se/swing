@@ -12,6 +12,11 @@ go run .
 npm install then 
 npm run dev
 
+Live Demo
+- Frontend: https://swing-xyz.vercel.app
+
+- Backend: https://swing-rd1g.onrender.com
+
 ---
 
 <table>
