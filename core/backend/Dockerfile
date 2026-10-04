@@ -31,7 +31,7 @@ COPY --from=builder /app/main .
 EXPOSE 2026
 
 # copy .env
-COPY .env .
+# COPY .env .
 
 # copy the db migrations
 COPY db/ ./db/
