@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { Argument } from './types';
+import { Argument } from '../types/types';
 import { PrimaryCommentInput, CommentFunc } from './comments';
-import { getValidToken } from './auth';
-import { api } from './api';
+import { getValidToken } from '../lib/auth';
+import { api } from '../lib/api';
 import { LineChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid, Legend, ReferenceArea } from 'recharts';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 

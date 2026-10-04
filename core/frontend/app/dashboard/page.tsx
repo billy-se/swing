@@ -1,13 +1,13 @@
 'use client';
 
 import { useState, useEffect, useRef, Suspense } from 'react';
-import { Comment, Argument, NotificationItem, RawComment, UserProfile, UserStats } from './types';
-import { ReviewModal } from './reviewModal';
-import { CreateArgumentModal } from './createModal';
-import { api, setMemoryAccessToken, getMemoryAccessToken } from '@/app/dashboard/api';
+import { Comment, Argument, NotificationItem, RawComment, UserProfile, UserStats } from '../../types/types';
+import { ReviewModal } from '../../components/reviewModal';
+import { CreateArgumentModal } from '../../components/createModal';
+import { api, setMemoryAccessToken, getMemoryAccessToken } from '@/lib/api';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { startTransition } from 'react';
-import { ArgumentStatsResponse } from './types';
+import { ArgumentStatsResponse } from '../../types/types';
 
 function Home() {
     const [isReviewOpen, setIsReviewOpen] = useState(false);
@@ -843,7 +843,7 @@ function Home() {
                         </div>
                     </div>
                         <div className="flex-1 min-h-0 overflow-y-auto space-y-4 pr-2 pb-6 relative [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-                        {effectiveNewCount > 0 && (
+                        {effectiveNewCount > 0 && activeTab === 'recent' && (
                             <div className="absolute top-2 left-0 right-0 flex justify-center z-30 pointer-events-none">
                                 <button
                                     onClick={handleShowNewArguments}

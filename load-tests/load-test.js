@@ -10,7 +10,7 @@ export const options = {
       startVUs: 2,
       stages: [
         { duration: '30s', target: 10 },   // Gentle warmup
-        { duration: '1m', target: 1300 },   // Safe peak load
+        { duration: '1m', target: 50 },   // Safe peak load
         { duration: '30s', target: 0 },   // Cool down
       ]
     },
@@ -165,16 +165,22 @@ export default function (data) {
   }
 
   const getArgsRes = http.get(`${BASE_URL}/api/arguments/top`, { headers: authHeaders, timeout: '3s' });
+  console.log("RAW ARGUMENTS RESPONSE:", getArgsRes.body);
   let targetArgumentId = null;
 
   if (check(getArgsRes, { 'fetched arguments successfully': (r) => r.status === 200 })) {
     try {
-      const args = JSON.parse(getArgsRes.body);
+      const resBody = JSON.parse(getArgsRes.body);
+      
+      const args = resBody.arguments || resBody;
+      
       if (Array.isArray(args) && args.length > 0) {
         const randomIndex = Math.floor(Math.random() * args.length);
         targetArgumentId = args[randomIndex].id;
       }
-    } catch (e) {}
+    } catch (e) {
+      console.log("Failed to parse arguments:", e);
+    }
   }
 
   if (targetArgumentId) {

@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation';
-import { setMemoryAccessToken, api } from '@/app/dashboard/api';
-import { UserProfile } from './dashboard/types';
+import { setMemoryAccessToken, api } from '@/lib/api';
+import { UserProfile } from '../types/types';
 
 //outside random words
 const words = ["PAPER", "DOOR", "THIN", "GRASS", "GRAY", "MINE", "CHALK", "CAT", "DOG", "RUN", "FAST", "BIG", "RED", "SUN", "HAT", "CUP", "PEN", "BOX", "CAR", "SKY", "SIT", "MAP", "NET", "BED", "TOY", "PIG", "PAN"];

@@ -16,7 +16,7 @@ COPY . .
 # RUN - execute in terminal inside docker, CGO_ENABLED=0 - disables C code integration
 # GOOS=linux - compile to linux, go build - command to compiles code
 # -o main - output, named it main, . - go look at direction /app
-RUN CGO_ENABLED=0 GOOS=linux go build -o main .
+RUN CGO_ENABLED=0 GOOS=linux go build -o main ./cmd/server
 
 # download alpine linux image latest
 FROM alpine:latest

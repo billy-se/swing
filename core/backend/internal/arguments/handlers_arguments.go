@@ -1,4 +1,4 @@
-package main
+package arguments
 
 import (
 	"database/sql"
@@ -11,6 +11,10 @@ import (
 	"time"
 
 	"github.com/lib/pq"
+
+	"vaine-backend/internal/auth"
+
+	"github.com/redis/go-redis/v9"
 )
 
 type ArgumentInput struct {
@@ -19,24 +23,53 @@ type ArgumentInput struct {
 }
 
 type ArgumentResponse struct {
-	ID         int             `json:"id"`
-	Author     string          `json:"author"`
-	Title      string          `json:"title"`
-	Content    string          `json:"content"`
-	LogicScore int             `json:"logic_score"`
-	PlanScore  float64         `json:"plan_score"`
-	IsWatched  bool            `json:"is_watched"`
-	CreatedAt  string          `json:"created_at"`
-	Comments   []*CommentInput `json:"comments"`
+	ID         int                `json:"id"`
+	Author     string             `json:"author"`
+	Title      string             `json:"title"`
+	Content    string             `json:"content"`
+	LogicScore int                `json:"logic_score"`
+	PlanScore  float64            `json:"plan_score"`
+	IsWatched  bool               `json:"is_watched"`
+	CreatedAt  string             `json:"created_at"`
+	Comments   []*CommentResponse `json:"comments"`
 }
 
-func (a *App) handleCreateArgument(w http.ResponseWriter, r *http.Request) {
+type CommentResponse struct {
+	ID           string             `json:"id"`
+	UserID       int64              `json:"user_id"`
+	ParentID     *int64             `json:"parent_id"`
+	Content      string             `json:"content"`
+	Author       string             `json:"author"`
+	Timestamp    string             `json:"timestamp"`
+	Score        int                `json:"score"`
+	FireCount    int                `json:"fire_count"`
+	UserHasFired bool               `json:"user_has_fired"`
+	Replies      []*CommentResponse `json:"replies,omitempty"`
+}
+
+type ArgumentHandler struct {
+	DB              *sql.DB
+	Redis           *redis.Client
+	JwtAccessSecret string
+	Broadcast       chan<- []byte
+}
+
+func NewArgumentHandler(db *sql.DB, redis *redis.Client, jwtSecret string, broadcast chan<- []byte) *ArgumentHandler {
+	return &ArgumentHandler{
+		DB:              db,
+		Redis:           redis,
+		JwtAccessSecret: jwtSecret,
+		Broadcast:       broadcast,
+	}
+}
+
+func (aH *ArgumentHandler) HandleCreateArgument(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	userID, ok := r.Context().Value(userIDKey).(int)
+	userID, ok := r.Context().Value(auth.UserIDKey).(int)
 	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -49,7 +82,7 @@ func (a *App) handleCreateArgument(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var username string
-	err := a.DB.QueryRow("SELECT username from users WHERE id = $1", userID).Scan(&username)
+	err := aH.DB.QueryRow("SELECT username from users WHERE id = $1", userID).Scan(&username)
 	if err != nil {
 		log.Printf("Failed to fetch username for user %d: %v", userID, err)
 		http.Error(w, "user profile error", http.StatusInternalServerError)
@@ -86,7 +119,7 @@ func (a *App) handleCreateArgument(w http.ResponseWriter, r *http.Request) {
 	var logicScore int
 	var createdAt string
 
-	err = a.DB.QueryRow(query, input.Title, input.Content, userID, score, username).Scan(&id, &logicScore, &createdAt)
+	err = aH.DB.QueryRow(query, input.Title, input.Content, userID, score, username).Scan(&id, &logicScore, &createdAt)
 	if err != nil {
 		log.Printf("Database insert error: %v", err)
 		http.Error(w, "Failed to save argument", http.StatusInternalServerError)
@@ -108,18 +141,18 @@ func (a *App) handleCreateArgument(w http.ResponseWriter, r *http.Request) {
 	//_ = a.Redis.Del(ctx, "arguments:feed", "argument:trending").Err()
 
 	feedpattern := "arguments:feed:user:*"
-	iterFeed := a.Redis.Scan(ctx, 0, feedpattern, 0).Iterator()
+	iterFeed := aH.Redis.Scan(ctx, 0, feedpattern, 0).Iterator()
 	for iterFeed.Next(ctx) {
-		_ = a.Redis.Del(ctx, iterFeed.Val())
+		_ = aH.Redis.Del(ctx, iterFeed.Val())
 	}
 
 	topPattern := "arguments:top:user:*"
-	iterTop := a.Redis.Scan(ctx, 0, topPattern, 0).Iterator()
+	iterTop := aH.Redis.Scan(ctx, 0, topPattern, 0).Iterator()
 	for iterTop.Next(ctx) {
-		_ = a.Redis.Del(ctx, iterTop.Val())
+		_ = aH.Redis.Del(ctx, iterTop.Val())
 	}
 
-	_ = a.Redis.Del(ctx, "argument:trending").Err()
+	_ = aH.Redis.Del(ctx, "argument:trending").Err()
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -162,7 +195,7 @@ func (a *App) handleCreateArgument(w http.ResponseWriter, r *http.Request) {
 		"type":    "NEW_ARGUMENT",
 		"payload": newArg,
 	})
-	a.hub.broadcast <- msg
+	aH.Broadcast <- msg
 }
 
 /*botResponse, err := CallBotAgent(input.Content)
@@ -177,7 +210,7 @@ if err != nil {
 	}
 }*/
 
-func (a *App) handleGetArguments(w http.ResponseWriter, r *http.Request) {
+func (aH *ArgumentHandler) HandleGetArguments(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -209,7 +242,7 @@ func (a *App) handleGetArguments(w http.ResponseWriter, r *http.Request) {
 				WHERE created_at >= (SELECT created_at FROM arguments WHERE id = $1)
 			`
 
-			err := a.DB.QueryRowContext(ctx, calcQuery, targetID).Scan(&position)
+			err := aH.DB.QueryRowContext(ctx, calcQuery, targetID).Scan(&position)
 			if err == nil && position > 0 {
 				page = (position + limit - 1) / limit
 			}
@@ -223,7 +256,7 @@ func (a *App) handleGetArguments(w http.ResponseWriter, r *http.Request) {
 		parts := strings.SplitN(authHeader, " ", 2)
 		if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
 
-			if claims, err := a.parseToken(parts[1]); err == nil {
+			if claims, err := auth.ParseToken(parts[1], aH.JwtAccessSecret); err == nil {
 
 				if userIDFloat, ok := claims["user_id"].(float64); ok {
 					currentUserID = int64(userIDFloat)
@@ -236,7 +269,7 @@ func (a *App) handleGetArguments(w http.ResponseWriter, r *http.Request) {
 
 	cacheKey := fmt.Sprintf("arguments:feed:user:%d:page:%d:limit:%d", currentUserID, page, limit)
 
-	cachedData, err := a.Redis.Get(ctx, cacheKey).Bytes()
+	cachedData, err := aH.Redis.Get(ctx, cacheKey).Bytes()
 	if err == nil && len(cachedData) > 0 {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -245,7 +278,7 @@ func (a *App) handleGetArguments(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var totalCount int
-	err = a.DB.QueryRowContext(ctx, "SELECT COUNT (*) FROM arguments").Scan(&totalCount)
+	err = aH.DB.QueryRowContext(ctx, "SELECT COUNT (*) FROM arguments").Scan(&totalCount)
 	if err != nil {
 		log.Printf("Count error: %v", err)
 		totalCount = 0
@@ -260,7 +293,7 @@ func (a *App) handleGetArguments(w http.ResponseWriter, r *http.Request) {
         ORDER BY a.created_at DESC
 		LIMIT $2 OFFSET $3
     `
-	rows, err := a.DB.Query(query, currentUserID, limit, offset)
+	rows, err := aH.DB.Query(query, currentUserID, limit, offset)
 	if err != nil {
 		log.Printf("Fetch error: %v", err)
 		http.Error(w, "Failed to fetch arguments", http.StatusInternalServerError)
@@ -294,14 +327,14 @@ func (a *App) handleGetArguments(w http.ResponseWriter, r *http.Request) {
             WHERE c.argument_id = $1 
             ORDER BY c.created_at ASC
         `
-		commentRows, err := a.DB.Query(commentQuery, arg.ID, currentUserID)
+		commentRows, err := aH.DB.Query(commentQuery, arg.ID, currentUserID)
 		if err != nil {
-			arg.Comments = []*CommentInput{}
+			arg.Comments = []*CommentResponse{}
 			arguments = append(arguments, arg)
 			continue
 		}
 
-		var flatComments []CommentInput
+		var flatComments []CommentResponse
 		for commentRows.Next() {
 			var cID int64
 			var cUserID sql.NullInt32
@@ -334,7 +367,7 @@ func (a *App) handleGetArguments(w http.ResponseWriter, r *http.Request) {
 
 				formattedTime := createdAt.Format("2006-01-02 15:04:05")
 
-				flatComments = append(flatComments, CommentInput{
+				flatComments = append(flatComments, CommentResponse{
 					ID:           fmt.Sprintf("%d", cID),
 					UserID:       actualUserID,
 					ParentID:     pID,
@@ -344,7 +377,7 @@ func (a *App) handleGetArguments(w http.ResponseWriter, r *http.Request) {
 					Score:        score,
 					FireCount:    int(fireCount),
 					UserHasFired: userHasFired,
-					Replies:      []*CommentInput{},
+					Replies:      []*CommentResponse{},
 				})
 			} else {
 				log.Printf("Comment scan error: %v", err)
@@ -357,8 +390,8 @@ func (a *App) handleGetArguments(w http.ResponseWriter, r *http.Request) {
 		}
 		commentRows.Close()
 
-		commentMap := make(map[string]*CommentInput)
-		var rootComments []*CommentInput
+		commentMap := make(map[string]*CommentResponse)
+		var rootComments []*CommentResponse
 
 		for i := range flatComments {
 			commentMap[flatComments[i].ID] = &flatComments[i]
@@ -379,7 +412,7 @@ func (a *App) handleGetArguments(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if rootComments == nil {
-			arg.Comments = []*CommentInput{}
+			arg.Comments = []*CommentResponse{}
 		} else {
 			arg.Comments = rootComments
 		}
@@ -413,7 +446,7 @@ func (a *App) handleGetArguments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = a.Redis.Set(ctx, cacheKey, responseBytes, 60*time.Second).Err()
+	_ = aH.Redis.Set(ctx, cacheKey, responseBytes, 60*time.Second).Err()
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -421,7 +454,7 @@ func (a *App) handleGetArguments(w http.ResponseWriter, r *http.Request) {
 	//json.NewEncoder(w).Encode(arguments)
 }
 
-func (a *App) handleTopArguments(w http.ResponseWriter, r *http.Request) {
+func (aH *ArgumentHandler) HandleTopArguments(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -447,7 +480,7 @@ func (a *App) handleTopArguments(w http.ResponseWriter, r *http.Request) {
 	if authHeader != "" {
 		parts := strings.SplitN(authHeader, " ", 2)
 		if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
-			if claims, err := a.parseToken(parts[1]); err == nil {
+			if claims, err := auth.ParseToken(parts[1], aH.JwtAccessSecret); err == nil {
 				if userIDFloat, ok := claims["user_id"].(float64); ok {
 					currentUserID = int64(userIDFloat)
 				}
@@ -459,7 +492,7 @@ func (a *App) handleTopArguments(w http.ResponseWriter, r *http.Request) {
 
 	cacheKey := fmt.Sprintf("arguments:top:user:%d:page:%d:limit:%d", currentUserID, page, limit)
 
-	cachedData, err := a.Redis.Get(ctx, cacheKey).Bytes()
+	cachedData, err := aH.Redis.Get(ctx, cacheKey).Bytes()
 	if err == nil && len(cachedData) > 0 {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -468,7 +501,7 @@ func (a *App) handleTopArguments(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var totalCount int
-	err = a.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM arguments").Scan(&totalCount)
+	err = aH.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM arguments").Scan(&totalCount)
 	if err != nil {
 		log.Printf("Count error: %v", err)
 		totalCount = 0
@@ -484,7 +517,7 @@ func (a *App) handleTopArguments(w http.ResponseWriter, r *http.Request) {
 		LIMIT $2 OFFSET $3
     `
 
-	rows, err := a.DB.Query(query, currentUserID, limit, offset)
+	rows, err := aH.DB.Query(query, currentUserID, limit, offset)
 	if err != nil {
 		log.Printf("Top arguments fetch error: %v", err)
 		http.Error(w, "Failed to fetch top arguments", http.StatusInternalServerError)
@@ -519,14 +552,14 @@ func (a *App) handleTopArguments(w http.ResponseWriter, r *http.Request) {
 			ORDER BY c.created_at ASC
 		`
 
-		commentRows, err := a.DB.Query(commentQuery, arg.ID, currentUserID)
+		commentRows, err := aH.DB.Query(commentQuery, arg.ID, currentUserID)
 		if err != nil {
-			arg.Comments = []*CommentInput{}
+			arg.Comments = []*CommentResponse{}
 			arguments = append(arguments, arg)
 			continue
 		}
 
-		var flatComments []CommentInput
+		var flatComments []CommentResponse
 		for commentRows.Next() {
 			var cID int64
 			var cUserID sql.NullInt32
@@ -559,7 +592,7 @@ func (a *App) handleTopArguments(w http.ResponseWriter, r *http.Request) {
 
 				formattedTime := createdAt.Format("2006-01-02 15:04:05")
 
-				flatComments = append(flatComments, CommentInput{
+				flatComments = append(flatComments, CommentResponse{
 					ID:           fmt.Sprintf("%d", cID),
 					UserID:       actualUserID,
 					ParentID:     pID,
@@ -569,7 +602,7 @@ func (a *App) handleTopArguments(w http.ResponseWriter, r *http.Request) {
 					Score:        score,
 					FireCount:    int(fireCount),
 					UserHasFired: userHasFired,
-					Replies:      []*CommentInput{},
+					Replies:      []*CommentResponse{},
 				})
 			}
 		}
@@ -580,8 +613,8 @@ func (a *App) handleTopArguments(w http.ResponseWriter, r *http.Request) {
 
 		commentRows.Close()
 
-		commentMap := make(map[string]*CommentInput)
-		var rootComments []*CommentInput
+		commentMap := make(map[string]*CommentResponse)
+		var rootComments []*CommentResponse
 
 		for i := range flatComments {
 			commentMap[flatComments[i].ID] = &flatComments[i]
@@ -602,7 +635,7 @@ func (a *App) handleTopArguments(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if rootComments == nil {
-			arg.Comments = []*CommentInput{}
+			arg.Comments = []*CommentResponse{}
 		} else {
 			arg.Comments = rootComments
 		}
@@ -635,7 +668,7 @@ func (a *App) handleTopArguments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = a.Redis.Set(ctx, cacheKey, responseBytes, 60*time.Second).Err()
+	_ = aH.Redis.Set(ctx, cacheKey, responseBytes, 60*time.Second).Err()
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -643,13 +676,13 @@ func (a *App) handleTopArguments(w http.ResponseWriter, r *http.Request) {
 	//json.NewEncoder(w).Encode(arguments)
 }
 
-func (a *App) handleCreateWatchlist(w http.ResponseWriter, r *http.Request) {
+func (aH *ArgumentHandler) HandleCreateWatchlist(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	userIDVal := r.Context().Value(userIDKey)
+	userIDVal := r.Context().Value(auth.UserIDKey)
 	if userIDVal == nil {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -677,7 +710,7 @@ func (a *App) handleCreateWatchlist(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var exists bool
-	err := a.DB.QueryRow(`
+	err := aH.DB.QueryRow(`
 		SELECT EXISTS(
 			SELECT 1 from watchlist
 			WHERE user_id = $1 AND argument_id = $2
@@ -689,14 +722,14 @@ func (a *App) handleCreateWatchlist(w http.ResponseWriter, r *http.Request) {
 
 	var actionStatus string
 	if exists {
-		_, err = a.DB.Exec(`
+		_, err = aH.DB.Exec(`
 			DELETE FROM watchlist
 			WHERE user_id = $1 AND argument_id = $2`,
 			userID, req.ArgumentID,
 		)
 		actionStatus = "unwatched"
 	} else {
-		_, err = a.DB.Exec(`
+		_, err = aH.DB.Exec(`
 			INSERT INTO watchlist (user_id, argument_id)
 			VALUES ($1,$2)`,
 			userID, req.ArgumentID,
@@ -712,24 +745,24 @@ func (a *App) handleCreateWatchlist(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	feedPattern := fmt.Sprintf("arguments:feed:user:%d:*", userID)
-	iterFeed := a.Redis.Scan(ctx, 0, feedPattern, 0).Iterator()
+	iterFeed := aH.Redis.Scan(ctx, 0, feedPattern, 0).Iterator()
 	for iterFeed.Next(ctx) {
-		_ = a.Redis.Del(ctx, iterFeed.Val())
+		_ = aH.Redis.Del(ctx, iterFeed.Val())
 	}
 
 	topPattern := fmt.Sprintf("arguments:top:user:%d:*", userID)
-	iterTop := a.Redis.Scan(ctx, 0, topPattern, 0).Iterator()
+	iterTop := aH.Redis.Scan(ctx, 0, topPattern, 0).Iterator()
 	for iterTop.Next(ctx) {
-		_ = a.Redis.Del(ctx, iterTop.Val())
+		_ = aH.Redis.Del(ctx, iterTop.Val())
 	}
 
 	watchlistPattern := fmt.Sprintf("arguments:watchlist:user:%d:*", userID)
-	iterWatchlist := a.Redis.Scan(ctx, 0, watchlistPattern, 0).Iterator()
+	iterWatchlist := aH.Redis.Scan(ctx, 0, watchlistPattern, 0).Iterator()
 	for iterWatchlist.Next(ctx) {
-		_ = a.Redis.Del(ctx, iterWatchlist.Val())
+		_ = aH.Redis.Del(ctx, iterWatchlist.Val())
 	}
 
-	_ = a.Redis.Del(ctx,
+	_ = aH.Redis.Del(ctx,
 		//fmt.Sprintf("arguments:feed:user:%d", userID),
 		//fmt.Sprintf("arguments:top:user:%d", userID),
 		//fmt.Sprintf("arguments:watchlist:user:%d", userID),
@@ -742,13 +775,13 @@ func (a *App) handleCreateWatchlist(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (a *App) handleGetWatchlist(w http.ResponseWriter, r *http.Request) {
+func (aH *ArgumentHandler) HandleGetWatchlist(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	userIDVal := r.Context().Value(userIDKey)
+	userIDVal := r.Context().Value(auth.UserIDKey)
 	if userIDVal == nil {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -785,7 +818,7 @@ func (a *App) handleGetWatchlist(w http.ResponseWriter, r *http.Request) {
 
 	cacheKey := fmt.Sprintf("arguments:watchlist:user:%d:page:%d:limit:%d", userID, page, limit)
 
-	cachedData, err := a.Redis.Get(ctx, cacheKey).Bytes()
+	cachedData, err := aH.Redis.Get(ctx, cacheKey).Bytes()
 	if err == nil && len(cachedData) > 0 {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -794,7 +827,7 @@ func (a *App) handleGetWatchlist(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var totalCount int
-	err = a.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM watchlist WHERE user_id = $1", userID).Scan(&totalCount)
+	err = aH.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM watchlist WHERE user_id = $1", userID).Scan(&totalCount)
 	if err != nil {
 		log.Printf("Count error: %v", err)
 		totalCount = 0
@@ -809,7 +842,7 @@ func (a *App) handleGetWatchlist(w http.ResponseWriter, r *http.Request) {
         ORDER BY w.created_at DESC
 		LIMIT $2 OFFSET $3
     `
-	rows, err := a.DB.Query(query, userID, limit, offset)
+	rows, err := aH.DB.Query(query, userID, limit, offset)
 	if err != nil {
 		log.Printf("Watchlist fetch error: %v", err)
 		http.Error(w, "Failed to fetch watchlist", http.StatusInternalServerError)
@@ -956,11 +989,11 @@ func (a *App) handleGetWatchlist(w http.ResponseWriter, r *http.Request) {
             ORDER BY c.argument_id, c.created_at ASC
         `
 
-		commentRows, err := a.DB.Query(commentQuery, pq.Array(argIDs), userID)
+		commentRows, err := aH.DB.Query(commentQuery, pq.Array(argIDs), userID)
 		if err == nil {
 			defer commentRows.Close()
 
-			commentsByArg := make(map[int64][]CommentInput)
+			commentsByArg := make(map[int64][]CommentResponse)
 
 			for commentRows.Next() {
 				var cID int64
@@ -991,7 +1024,7 @@ func (a *App) handleGetWatchlist(w http.ResponseWriter, r *http.Request) {
 						actualUserID = int64(cUserID.Int32)
 					}
 
-					flatComments := CommentInput{
+					flatComments := CommentResponse{
 						ID:           fmt.Sprintf("%d", cID),
 						UserID:       actualUserID,
 						ParentID:     pID,
@@ -1001,7 +1034,7 @@ func (a *App) handleGetWatchlist(w http.ResponseWriter, r *http.Request) {
 						Score:        score,
 						FireCount:    int(fireCount),
 						UserHasFired: userHasFired,
-						Replies:      []*CommentInput{},
+						Replies:      []*CommentResponse{},
 					}
 
 					commentsByArg[argID] = append(commentsByArg[argID], flatComments)
@@ -1016,12 +1049,12 @@ func (a *App) handleGetWatchlist(w http.ResponseWriter, r *http.Request) {
 			for i := range arguments {
 				flatList := commentsByArg[int64(arguments[i].ID)]
 				if len(flatList) == 0 {
-					arguments[i].Comments = []*CommentInput{}
+					arguments[i].Comments = []*CommentResponse{}
 					continue
 				}
 
-				commentMap := make(map[string]*CommentInput)
-				var rootComments []*CommentInput
+				commentMap := make(map[string]*CommentResponse)
+				var rootComments []*CommentResponse
 
 				for j := range flatList {
 					commentMap[flatList[j].ID] = &flatList[j]
@@ -1063,7 +1096,7 @@ func (a *App) handleGetWatchlist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = a.Redis.Set(ctx, cacheKey, responseBytes, 60*time.Second).Err()
+	_ = aH.Redis.Set(ctx, cacheKey, responseBytes, 60*time.Second).Err()
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -1071,7 +1104,7 @@ func (a *App) handleGetWatchlist(w http.ResponseWriter, r *http.Request) {
 	//json.NewEncoder(w).Encode(arguments)
 }
 
-func (a *App) handleGetArgument(w http.ResponseWriter, r *http.Request) {
+func (aH *ArgumentHandler) HandleGetArgument(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -1089,7 +1122,7 @@ func (a *App) handleGetArgument(w http.ResponseWriter, r *http.Request) {
 	if authHeader != "" {
 		parts := strings.SplitN(authHeader, " ", 2)
 		if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
-			if claims, err := a.parseToken(parts[1]); err == nil {
+			if claims, err := auth.ParseToken(parts[1], aH.JwtAccessSecret); err == nil {
 				if userIDFloat, ok := claims["user_id"].(float64); ok {
 					currentUserID = int64(userIDFloat)
 				}
@@ -1112,7 +1145,7 @@ func (a *App) handleGetArgument(w http.ResponseWriter, r *http.Request) {
 	var rawUserID sql.NullInt32
 	var authorNull sql.NullString
 
-	err = a.DB.QueryRowContext(ctx, query, currentUserID, argumentID).Scan(
+	err = aH.DB.QueryRowContext(ctx, query, currentUserID, argumentID).Scan(
 		&arg.ID, &rawUserID, &arg.Title, &arg.Content, &arg.LogicScore, &authorNull, &arg.CreatedAt, &arg.PlanScore, &arg.IsWatched,
 	)
 
@@ -1139,12 +1172,12 @@ func (a *App) handleGetArgument(w http.ResponseWriter, r *http.Request) {
 		WHERE c.argument_id = $1 
 		ORDER BY c.created_at ASC
 	`
-	commentRows, err := a.DB.QueryContext(ctx, commentQuery, argumentID, currentUserID)
+	commentRows, err := aH.DB.QueryContext(ctx, commentQuery, argumentID, currentUserID)
 	if err != nil {
-		arg.Comments = []*CommentInput{}
+		arg.Comments = []*CommentResponse{}
 	} else {
 		defer commentRows.Close()
-		var flatComments []CommentInput
+		var flatComments []CommentResponse
 
 		for commentRows.Next() {
 			var cID int64
@@ -1176,7 +1209,7 @@ func (a *App) handleGetArgument(w http.ResponseWriter, r *http.Request) {
 					actualUserID = int64(cUserID.Int32)
 				}
 
-				flatComments = append(flatComments, CommentInput{
+				flatComments = append(flatComments, CommentResponse{
 					ID:           fmt.Sprintf("%d", cID),
 					UserID:       actualUserID,
 					ParentID:     pID,
@@ -1186,7 +1219,7 @@ func (a *App) handleGetArgument(w http.ResponseWriter, r *http.Request) {
 					Score:        score,
 					FireCount:    int(fireCount),
 					UserHasFired: userHasFired,
-					Replies:      []*CommentInput{},
+					Replies:      []*CommentResponse{},
 				})
 			}
 		}
@@ -1196,8 +1229,8 @@ func (a *App) handleGetArgument(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		commentMap := make(map[string]*CommentInput)
-		var rootComments []*CommentInput
+		commentMap := make(map[string]*CommentResponse)
+		var rootComments []*CommentResponse
 
 		for i := range flatComments {
 			commentMap[flatComments[i].ID] = &flatComments[i]
@@ -1218,7 +1251,7 @@ func (a *App) handleGetArgument(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if rootComments == nil {
-			arg.Comments = []*CommentInput{}
+			arg.Comments = []*CommentResponse{}
 		} else {
 			arg.Comments = rootComments
 		}

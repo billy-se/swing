@@ -1,4 +1,4 @@
-package main
+package stats
 
 import (
 	"database/sql"
@@ -21,7 +21,11 @@ type ArgumentStatsResponse struct {
 	FireReactions []TimeSeriesPoint `json:"fire_reactions"`
 }
 
-func (a *App) handleShowStats(w http.ResponseWriter, r *http.Request) {
+type HandlerStats struct {
+	DB              *sql.DB
+}
+
+func (hS *HandlerStats) HandleShowStats(w http.ResponseWriter, r *http.Request) {
 	argumentIDStr := r.URL.Query().Get("argument_id")
 	if argumentIDStr == "" {
 		http.Error(w, "Missing argument_id parameter", http.StatusBadRequest)
@@ -44,7 +48,7 @@ func (a *App) handleShowStats(w http.ResponseWriter, r *http.Request) {
 		FROM arguments 
 		WHERE id = $1;
 	`
-	err = a.DB.QueryRow(queryAge, argumentID).Scan(&stats.CreatedAt, &stats.AgeInSeconds)
+	err = hS.DB.QueryRow(queryAge, argumentID).Scan(&stats.CreatedAt, &stats.AgeInSeconds)
 	if err == sql.ErrNoRows {
 		http.Error(w, "Argument not found", http.StatusNotFound)
 		return
@@ -60,7 +64,7 @@ func (a *App) handleShowStats(w http.ResponseWriter, r *http.Request) {
 		GROUP BY time_bucket 
 		ORDER BY time_bucket ASC;
 	`
-	rowsCV, err := a.DB.Query(queryCommentVol, argumentID)
+	rowsCV, err := hS.DB.Query(queryCommentVol, argumentID)
 	if err == nil {
 		defer rowsCV.Close()
 		for rowsCV.Next() {
@@ -83,7 +87,7 @@ func (a *App) handleShowStats(w http.ResponseWriter, r *http.Request) {
 		GROUP BY time_bucket 
 		ORDER BY time_bucket ASC;
 	`
-	rowsFire, err := a.DB.Query(queryFire, argumentID)
+	rowsFire, err := hS.DB.Query(queryFire, argumentID)
 	if err == nil {
 		defer rowsFire.Close()
 		for rowsFire.Next() {
@@ -112,7 +116,7 @@ type UserStatsResponse struct {
 	FiresGivenCount        int `json:"firesGivenCount"`
 }
 
-func (a *App) handleUserStats(w http.ResponseWriter, r *http.Request) {
+func (hS *HandlerStats) HandleUserStats(w http.ResponseWriter, r *http.Request) {
 	userIdStr := r.URL.Query().Get("user_id")
 	if userIdStr == "" {
 		http.Error(w, "Missing user_id parameter", http.StatusBadRequest)
@@ -129,21 +133,21 @@ func (a *App) handleUserStats(w http.ResponseWriter, r *http.Request) {
 	stats.UserID = userId
 
 	queryArgs := `SELECT COUNT(*) FROM arguments WHERE user_id = $1;`
-	err = a.DB.QueryRow(queryArgs, userId).Scan(&stats.ArgumentsCount)
+	err = hS.DB.QueryRow(queryArgs, userId).Scan(&stats.ArgumentsCount)
 	if err != nil {
 		http.Error(w, "Database error (Arguments): "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	queryDiscussions := `SELECT COUNT(DISTINCT argument_id) FROM comments WHERE user_id = $1;`
-	err = a.DB.QueryRow(queryDiscussions, userId).Scan(&stats.UniqueDiscussionsCount)
+	err = hS.DB.QueryRow(queryDiscussions, userId).Scan(&stats.UniqueDiscussionsCount)
 	if err != nil {
 		http.Error(w, "Database error (Discussions): "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	queryFires := `SELECT COUNT(*) FROM comment_reactions WHERE user_id = $1 AND reaction_type = 'fire';`
-	err = a.DB.QueryRow(queryFires, userId).Scan(&stats.FiresGivenCount)
+	err = hS.DB.QueryRow(queryFires, userId).Scan(&stats.FiresGivenCount)
 	if err != nil {
 		http.Error(w, "Database error (Fires Given): "+err.Error(), http.StatusInternalServerError)
 		return

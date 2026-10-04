@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import { Comment } from './types';
-import { api } from './api';
-import { getValidToken } from './auth';
+import { Comment } from '../types/types';
+import { api } from '../lib/api';
+import { getValidToken } from '../lib/auth';
 
 interface CommentFuncProps {
     processedComment: Comment;

@@ -1,4 +1,4 @@
-package main
+package arguments
 
 import (
 	"database/sql"
@@ -42,7 +42,7 @@ func CalculateCompetitorPenalty(currentScore int) int {
 	return penalty
 }
 
-func (a *App) ApplyConsensusDeflationTx(tx *sql.Tx, commentID int64, argumentID int64, creatorID int64, commentUserID int64) error {
+func ApplyConsensusDeflationTx(tx *sql.Tx, commentID int64, argumentID int64, creatorID int64, commentUserID int64) error {
 	_, err := tx.Exec(`UPDATE comments SET is_fire_triggered = TRUE WHERE id = $1`, commentID)
 	if err != nil {
 		return fmt.Errorf("failed to trigger comment: %w", err)
@@ -119,7 +119,7 @@ func (a *App) ApplyConsensusDeflationTx(tx *sql.Tx, commentID int64, argumentID 
 	return nil
 }
 
-func (a *App) updateArgumentLogicScore(argumentID int64, friction float64) error {
+func (aH *ArgumentHandler) UpdateArgumentLogicScore(argumentID int64, friction float64) error {
 	query := `
 		UPDATE arguments 
 		SET logic_score = (
@@ -133,7 +133,7 @@ func (a *App) updateArgumentLogicScore(argumentID int64, friction float64) error
 		GREATEST(1.0, EXTRACT(EPOCH FROM (NOW() - created_at)) / 3600.0 + 2.0)
 		WHERE id = $2
 	`
-	_, err := a.DB.Exec(query, friction, argumentID)
+	_, err := aH.DB.Exec(query, friction, argumentID)
 	if err != nil {
 		return fmt.Errorf("failed to update argument logic score: %w", err)
 	}
