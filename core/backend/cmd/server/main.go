@@ -8,10 +8,10 @@ import (
 	"sync"
 	"time"
 	"vaine-backend/db"
-	"vaine-backend/internal/websocket"
-	"vaine-backend/internal/middleware"
 	"vaine-backend/internal/config"
 	"vaine-backend/internal/database"
+	"vaine-backend/internal/middleware"
+	"vaine-backend/internal/websocket"
 
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
@@ -42,8 +42,13 @@ type WSTicket struct {
 
 func main() {
 	//env
-	if loadError := godotenv.Load(); loadError != nil {
+	/*if loadError := godotenv.Load(); loadError != nil {
 		log.Fatalf("No .env found")
+	}*/
+	if _, err := os.Stat(".env"); err == nil {
+		if loadError := godotenv.Load(); loadError != nil {
+			log.Printf("Warning: Error loading .env file: %v", loadError)
+		}
 	}
 
 	//database and migration setup
