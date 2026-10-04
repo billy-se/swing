@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
-	"time"
 	"sync"
+	"time"
 
 	"github.com/coder/websocket"
 
@@ -31,8 +32,8 @@ func NewHub() *Hub {
 }
 
 type WebSocketHandler struct {
-	ticketMutex      sync.Mutex
-	wsTickets      map[string]WSTicket
+	ticketMutex     sync.Mutex
+	wsTickets       map[string]WSTicket
 	Hub             *Hub
 	JwtAccessSecret string
 }
@@ -44,8 +45,8 @@ type WSTicket struct {
 
 func NewWebSocketHandler(hub *Hub, jwtSecret string) *WebSocketHandler {
 	return &WebSocketHandler{
-		wsTickets: make(map[string]WSTicket),
-		Hub: hub,
+		wsTickets:       make(map[string]WSTicket),
+		Hub:             hub,
 		JwtAccessSecret: jwtSecret,
 	}
 }
@@ -89,8 +90,15 @@ func (ws *WebSocketHandler) WebSocketHandler(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
+	allowedOrigin := os.Getenv("ACCEPT_OPTION_WS")
+
+	origins := []string{"localhost:*", "127.0.0.1:*"}
+	if allowedOrigin != "" {
+		origins = append(origins, allowedOrigin)
+	}
+
 	connection, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		OriginPatterns: []string{"localhost:*", "127.0.0.1:*"},
+		OriginPatterns: origins,
 	})
 	if err != nil {
 		log.Println("Failed to upgrade connection", err)
