@@ -36,7 +36,7 @@ function Home() {
     const [isLoading, setIsLoading] = useState(true);
     const [isAuthInitialized, setIsAuthInitialized] = useState(false); 
 
-    const [cache, setCache] = useState<Record<string, Argument[]>>({});
+    const [cache, setCache] = useState<Record<string, { items: Argument[]; maxPage: number | null }>>({});
 
     const page = Number(searchParams.get('page')) || 1;
     const highlightArgumentId = searchParams.get('argumentId');
@@ -47,13 +47,13 @@ function Home() {
     const [isLoadingMore, setIsLoadingMore] = useState(false);
     const LIMIT = 20;
 
-    //const [stats, setStats] = useState<ArgumentStatsResponse | null>(null);
-
     const [pendingArguments, setPendingArguments] = useState<Argument[]>([]);
     const [newCount, setNewCount] = useState(0);
     const [maxPage, setMaxPage] = useState<number | null>(null);
 
     const [userStats, setUserStats] = useState<UserStats | null>(null);
+
+    const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
 
     const mapComments = (commentsList: RawComment[]): Comment[] => {
         if (!Array.isArray(commentsList)) return [];
@@ -82,19 +82,12 @@ function Home() {
         }
 
         if (reset && customPage === undefined && activeTab !== 'watchlist' && cache[activeTab]) {
-            setArgumentsList(cache[activeTab]);
-            //setPage(1);
+            setArgumentsList(cache[activeTab].items);
             setHasMore(true);
-            setMaxPage(null);
+            setMaxPage(cache[activeTab].maxPage);
             return;
         }
-        /*
-        if (reset && cache[activeTab]) {
-            setArgumentsList(cache[activeTab]);
-            setPage(2);
-            return;
-        }*/
-
+        
         try {
             if (reset || customPage !== undefined) {
                 setIsLoadingList(true);
@@ -113,31 +106,25 @@ function Home() {
 
             const items = Array.isArray(data) ? data : (data.arguments || data.watchlist || []);
             const totalItems = data.total ?? null;
-            //if (!Array.isArray(data)) return;
+
             setHasMore(items.length === LIMIT);
-            //if (items.length < LIMIT) setHasMore(false);
+
+            let calculatedMaxPage: number | null = null;
             if (totalItems !== null) {
-                setMaxPage(Math.ceil(totalItems/LIMIT));
+                calculatedMaxPage = Math.ceil(totalItems / LIMIT);
             } else if (items.length < LIMIT) {
-                setMaxPage(targetPage);
+                calculatedMaxPage = targetPage;
             } else {
-                setMaxPage(prev => (prev !== null && targetPage >= prev ? null : prev));
+                calculatedMaxPage = maxPage !== null && targetPage >= maxPage ? null : maxPage;
             }
+            
+            setMaxPage(calculatedMaxPage);
 
             const initializedData = items.map((existingArguments: Argument) => ({
                 ...existingArguments,
                 comments: mapComments(existingArguments.comments || [])
             }));
 
-            /*setArgumentsList(prevList => {
-                if (reset || targetPage === 1) {
-                    return initializedData;
-                }
-
-                const existingIds = new Set(prevList.map(item => item.id));
-                const uniqueNewItems = initializedData.filter((item: Argument) => !existingIds.has(item.id));
-                return [...prevList, ...uniqueNewItems];
-            });*/
             setArgumentsList(prevList => {
                 if (reset || customPage !== undefined || targetPage === 1) {
                     return initializedData;
@@ -148,27 +135,15 @@ function Home() {
                 return [...prevList, ...uniqueNewItems];
             });
 
-            /*if (customPage !== undefined) {
-                setPage(customPage);
-            } else if (reset) {
-                setPage(1);
-                setCache(prev => ({ ...prev, [activeTab]: initializedData }));
-            } else {
-                setPage(prev => prev+1);
-            }*/
-
             if (reset) {
-                setCache(prev => ({ ...prev, [activeTab]: initializedData }));
+                setCache(prev => ({ ...prev, [activeTab]: {
+                    items: initializedData,
+                    maxPage: calculatedMaxPage
+                } }));
             }
-
-            /*setCache(prev => ({ ...prev, [activeTab]: initializedData }));
-            startTransition(() => {
-                setArgumentsList(initializedData);
-            });*/
         } catch (err) {
             console.error("Failed to fetch arguments:", err);
         } finally {
-            //setIsLoading(false);
             setIsLoadingList(false);
             setIsLoadingMore(false);
         }
@@ -250,13 +225,17 @@ function Home() {
         }
     };
 
-    /*const handleLogoutAndReload = () => {
-
-        sessionStorage.clear();
-        localStorage.clear();
-        
-        window.location.href = '/login'; 
-    };*/
+    const toggleExpand = (id: number) => {
+        setExpandedIds(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) {
+                next.delete(id);
+            } else {
+                next.add(id);
+            }
+            return next;
+        });
+    }
     const hasInitialized = useRef(false);
 
     useEffect(() => {
@@ -320,7 +299,6 @@ function Home() {
                         } else {
                             console.warn("Network hiccup during session init, keeping previous state", err);
                         }
-                        //console.log("No active session found. Running as guest");
                     } finally {
                         setIsLoading(false);
                     }
@@ -526,25 +504,6 @@ function Home() {
         };
     }, []);
 
-    /*useEffect(() => {
-        if (!isAuthInitialized) return;
-
-        loadArguments(true, page);
-
-        if (highlightArgumentId) {
-            setTimeout(() => {
-                const element = document.getElementById(`argument-${highlightArgumentId}`);
-                if (element) {
-                    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                    element.classList.add('ring-4', 'ring-emerald-500');
-                }
-            }, 500);
-        }
-        //setPage(1);
-        //setHasMore(true);
-        //loadArguments(true, 1);
-    },[activeTab, page, isAuthInitialized]);*/
-
     const selectedArgument = (argumentsList || []).find((argumentItem) => argumentItem.id === selectedArgumentId) ?? null;
     
     const isViewer = user?.role === 'viewer';
@@ -566,6 +525,9 @@ function Home() {
     }, [isLoggedIn, isViewer]);
 
     useEffect(() => {
+        if (!isAuthInitialized) return;
+
+        const urlPage = Number(searchParams.get('page')) || 1;
         const urlArgId = searchParams.get('argumentId');
         const urlCommentId = searchParams.get('commentId');
 
@@ -574,12 +536,8 @@ function Home() {
             setTargetCommentId(urlCommentId ? Number(urlCommentId) : null);
             setIsReviewOpen(true);
         }
-    }, [searchParams]);
-
-    useEffect(() => {
-        if (!isAuthInitialized) return;
-
-        loadArguments(true, page);
+        
+        loadArguments(true, urlPage);
 
         if (highlightArgumentId) {
             setTimeout(() => {
@@ -590,7 +548,7 @@ function Home() {
                 }
             }, 500);
         }
-    }, [activeTab, page, isAuthInitialized, highlightArgumentId]);
+    }, [searchParams, isAuthInitialized, highlightArgumentId]);
 
     useEffect(() => { //good
         const handleHashChange = () => {
@@ -858,7 +816,11 @@ function Home() {
 
                         {(argumentsList || []).length > 0 ? (
                             <>
-                                {(argumentsList || []).map((check) => (
+                                {(argumentsList || []).map((check) => {
+                                    const isLong = check.content.length > 180;
+                                    const isExpanded = expandedIds.has(check.id);
+
+                                    return(
                                     <div key={check.id} className="bg-zinc-950 border border-zinc-800 rounded-lg p-5 flex flex-col gap-4 hover:border-zinc-700 transition-colors">
                                         <div className="flex justify-between items-center text-[10px] text-zinc-500">
                                             <span>AUTHOR: [{check.author}]</span>
@@ -876,14 +838,25 @@ function Home() {
                                         <h2 className="text-sm font-semibold text-zinc-100">
                                             {check.title}
                                         </h2>
-                                        <p className="text-xs text-zinc-400 leading-relaxed whitespace-pre-wrap">
-                                            {check.content}
-                                        </p>
+
+                                        <div>
+                                            <p className="text-xs text-zinc-400 leading-relaxed whitespace-pre-wrap">
+                                                {isLong && !isExpanded ? `${check.content.substring(0, 180)}...` : check.content}
+                                            </p>
+                                            {isLong && (
+                                                <button 
+                                                    onClick={() => toggleExpand(check.id)} 
+                                                    className="text-[11px] text-emerald-400 hover:underline mt-1.5 block font-medium"
+                                                >
+                                                    {isExpanded ? "Show less" : "Read more"}
+                                                </button>
+                                            )}
+
+                                        </div>
                                         <div className="flex justify-between items-center pt-3 border-t border-zinc-900 text-xs">
                                             <span className="text-emerald-400">Logic Score: +{check.logic_score}</span>
                                             <button className="bg-zinc-900 hover:bg-zinc-800 text-zinc-200 px-3 py-1 rounded border border-zinc-800 text-xs transition-colors"
                                                 onClick={() => {
-                                                    //router.push(`?tab=${activeTab}&page=${page}&argumentId=${check.id}`);
                                                     window.history.pushState(null, '', `#argument-${check.id}`);
 
                                                     setSelectedArgumentId(check.id);
@@ -894,25 +867,14 @@ function Home() {
                                             </button>
                                         </div>
                                     </div>
-                                ))}
-                                {/*
-                                {hasMore && (
-                                    <div className="flex justify-center pt-2">
-                                        <button
-                                            onClick={() => loadArguments(false)}
-                                            disabled={isLoadingMore}
-                                            className="px-4 py-2 bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-emerald-400 hover:border-emerald-500/50 rounded transition-colors text-xs font-mono disabled:opacity-50"
-                                        >
-                                            {isLoadingMore ? "Loading..." : "Load More"}
-                                        </button>
-                                    </div>
-                                )}*/}
+                                    );
+                                })}
+                                
                                 <div className="flex justify-between items-center pt-4 border-t border-zinc-900 text-xs font-mono shrink-0">
                                     <button
                                         onClick={() => {
                                             const chunkSize = 10;
                                             const targetPage = Math.max(1, page - chunkSize);
-                                            //loadArguments(false, targetPage);
                                             router.push(`?tab=${activeTab}&page=${targetPage}`);
                                         }}
                                         disabled={page <= 1 || isLoadingList}
@@ -922,7 +884,7 @@ function Home() {
                                     </button>
 
                                     <div className="flex items-center gap-1.5 flex-wrap justify-center">
-                                        {(() => {
+                                    {(() => {
                                             const chunkSize = 10;
                                             const currentChunk = Math.floor((page - 1) / chunkSize);
                                             const startPage = currentChunk * chunkSize + 1;
@@ -931,11 +893,9 @@ function Home() {
                                             
                                             for (let i = 0; i < chunkSize; i++) {
                                                 const p = startPage + i;
-                                                
                                                 if (maxPage !== null && p > maxPage) {
                                                     break;
                                                 }
-                                                
                                                 pages.push(p);
                                             }
 
@@ -957,7 +917,7 @@ function Home() {
                                                 );
                                             });
                                         })()}
-                                    </div>
+                                </div>
 
                                     <button
                                         onClick={() => {

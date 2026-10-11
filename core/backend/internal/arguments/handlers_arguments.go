@@ -93,22 +93,6 @@ func (aH *ArgumentHandler) HandleCreateArgument(w http.ResponseWriter, r *http.R
 	var reviewContent string = ""
 	var botCommentID int = 0
 	var botCommentCreatedAt string = ""
-	/*botResponseText, err := CallBotAgent(input.Title, input.Content)//needs to
-	//score here
-	var reviewContent = "Automated security audit failed to generate review."
-	var score int = 50
-	if err == nil {
-		var audit AuditResponse
-		cleanedJSON := cleanJSONResponse(botResponseText)
-		if json.Unmarshal([]byte(cleanedJSON), &audit) == nil {
-			score = audit.Score
-			reviewContent = audit.Review
-		} else {
-			reviewContent = botResponseText
-		}
-	} else {
-		log.Printf("Bot agent call error: %v", err)
-	}*/
 
 	query := `
 		INSERT INTO arguments (title, content, user_id, logic_score, author) 
@@ -126,19 +110,7 @@ func (aH *ArgumentHandler) HandleCreateArgument(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	/*var botCommentID int
-	var botCommentCreatedAt string
-	if reviewContent != "" {
-		commentQuery := `INSERT INTO comments (argument_id, user_id, author, content) VALUES ($1, NULL, $2, $3) RETURNING id, created_at`
-		err = a.DB.QueryRow(commentQuery, id, "AI Auditor", reviewContent).Scan(&botCommentID, &botCommentCreatedAt)
-		if err != nil {
-			log.Printf("Failed to save bot review comment: %v", err)
-		}
-	}*/
-
 	ctx := r.Context()
-
-	//_ = a.Redis.Del(ctx, "arguments:feed", "argument:trending").Err()
 
 	feedpattern := "arguments:feed:user:*"
 	iterFeed := aH.Redis.Scan(ctx, 0, feedpattern, 0).Iterator()
@@ -151,8 +123,6 @@ func (aH *ArgumentHandler) HandleCreateArgument(w http.ResponseWriter, r *http.R
 	for iterTop.Next(ctx) {
 		_ = aH.Redis.Del(ctx, iterTop.Val())
 	}
-
-	_ = aH.Redis.Del(ctx, "argument:trending").Err()
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -197,18 +167,6 @@ func (aH *ArgumentHandler) HandleCreateArgument(w http.ResponseWriter, r *http.R
 	})
 	aH.Broadcast <- msg
 }
-
-/*botResponse, err := CallBotAgent(input.Content)
-if err != nil {
-	fmt.Println("Bot failed to respond:", err)
-} else {
-	commentQuery := `INSERT INTO comments (argument_id, content, user_id) VALUES ($1, $2, $3)`
-
-	_, err = a.DB.Exec(commentQuery, id, botResponse, 0)
-	if err != nil {
-		log.Printf("Failed to save bot comment: %v", err)
-	}
-}*/
 
 func (aH *ArgumentHandler) HandleGetArguments(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

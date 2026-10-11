@@ -33,13 +33,19 @@ export function ReviewModal({ isReviewOpen, selectedArgument, selectedArgumentId
     const [left, setLeft] = useState<number | 'dataMin'>('dataMin');
     const [right, setRight] = useState<number | 'dataMax'>('dataMax');
     const [refAreaLeft, setRefAreaLeft] = useState<number | null>(null);
-    const [refAreaRight, setRefAreaRight] = useState<number | null>(null);  
+    const [refAreaRight, setRefAreaRight] = useState<number | null>(null); 
+    
+    const [isExpandedLong, setIsExpandedLong] = useState(false);
 
     const router = useRouter();
     const pathname = usePathname();
     const searchParams = useSearchParams();
 
     const activeArg = selectedArgument || detailedArgument;
+
+    useEffect(() => {
+        setIsExpandedLong(false);
+    }, [activeArg?.id]);
 
     const handleLocalAddReply = async (targetId: string, savedComment: any) => {
         if (handleAddReply) {
@@ -147,17 +153,6 @@ export function ReviewModal({ isReviewOpen, selectedArgument, selectedArgumentId
             fetchStats();
         }
     }, [activeArg?.comments?.length]);
-
-    /*useEffect(() => {
-        const argumentId = searchParams.get('argumentId');
-        if (!selectedArgument && argumentId) {
-            api.get(`/api/argument/${argumentId}`)
-            .then(res => setDetailedArgument(res.data))
-            .catch(err => console.error("Failed to load argument", err))
-        } else {
-            setDetailedArgument(null);
-        }
-    }, [selectedArgument, searchParams]);*/
 
     const handleZoom = () => {
         if (refAreaLeft === null || refAreaRight === null || refAreaLeft === refAreaRight) {
@@ -293,6 +288,8 @@ export function ReviewModal({ isReviewOpen, selectedArgument, selectedArgumentId
         );
     }
 
+    const isLongContent = (activeArg?.content || '').length > 180; 
+
     return (
         <div 
             className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex justify-between overflow-hidden"
@@ -420,8 +417,17 @@ export function ReviewModal({ isReviewOpen, selectedArgument, selectedArgumentId
                         
                     <h3 className="text-lg font-bold mb-2">{activeArg?.title}</h3>
                     <p className="text-sm text-zinc-300 mb-4 whitespace-pre-wrap">
-                        {activeArg?.content}
+                        {isLongContent && !isExpandedLong ? `${activeArg?.content.substring(0,150)}...` : activeArg?.content}
                     </p>
+
+                    {isLongContent && (
+                        <button 
+                            onClick={() => setIsExpandedLong(!isExpandedLong)} 
+                            className="text-xs text-emerald-400 hover:underline mb-4 block"
+                        >
+                            {isExpandedLong ? "Show less" : "Read more"}
+                        </button>
+                    )}
                         
                     <div className="border-t border-zinc-800 pt-4 mt-4">
                         <h4 className="text-[10px] font-semibold uppercase text-zinc-500 tracking-wider mb-2">Feedbacks and Comments</h4>
@@ -432,7 +438,9 @@ export function ReviewModal({ isReviewOpen, selectedArgument, selectedArgumentId
                     </div>
                 </div>
 
-                <div className="flex-1 min-h-0 overflow-y-auto mt-4 pt-3 border-t border-zinc-800/60 space-y-3 pr-1">
+                <div className="flex-1 min-h-0 overflow-y-auto mt-4 pt-3 border-t border-zinc-800/60 space-y-3 pr-1 [&::-webkit-scrollbar]:hidden"
+                    style={{ scrollbarWidth: 'none' }}
+                    >
                     {activeArg?.comments && activeArg.comments.length > 0 ? (
                         activeArg.comments.map((processedComment) => (
                             <CommentFunc 
